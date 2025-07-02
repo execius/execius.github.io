@@ -1,0 +1,113 @@
+html{
+  background:black;
+  color:white;
+}
+body, p {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: white;
+}
+.layout {
+  display: flex;
+}
+h2, h4,h3,h5,h6 {
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: #ddd;
+}
+.bar{
+  display: flex;
+  justify-content: space-between;
+  align-items:center;
+  border-bottom: 1px solid #444; /* dark gray line */
+  padding: 8px 8px;
+  box-shadow: 0 2px 4px rgba(255,255,255,0.05);
+}
+
+.home_logo{
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+}
+#logotext{
+  opacity:0.9;
+  padding : 4px;
+  color: black;
+  background-color: white;
+  text-decoration: none;
+  font-weight: bold;
+  transition: background 0.3s ease;
+}
+#logoimg{
+  border: 2px solid white;
+  border-radius:50%;
+}
+.categories{
+  margin-right:20px;
+  background-color:black;
+  gap:5px;
+  display: flex;
+  justify-content: space-evenly;
+}
+.categories a {
+  display: flex;
+  flex-direction: row;
+  opacity:0.9;
+  padding : 4px;
+  color: black;
+  background-color: white;
+  text-decoration: none;
+}
+.sidebar{
+  display:flex;
+  opacity:0.7;
+  width:200px;
+  flex-direction: column;
+  text-decoration: none;
+  background-color: black;
+  border-right: 1px solid #444;
+  height:100vh;
+  align-items: center;
+  padding-top: 8px;
+  padding: 10px 2px;
+  box-sizing: border-box;
+
+}
+#sideimg{
+  border: 2px solid white;
+  border-radius:50%;
+}
+.whoami{
+  display:flex;
+  font-size: 16px;
+  flex-direction: column;
+  align-items: center;
+  text-align:center;
+}
+.contactme{
+  text-align:center;
+  padding : 4px;
+  gap:10px;
+  width :100px;
+  display:flex;
+  line-height:1;
+  font-size: 16px;
+  flex-direction: column;
+}
+.contactme a {
+
+  opacity:0.5;
+  text-decoration: none;
+  color: black;
+  background-color: white;
+}
+
+hr{
+  color:white;
+  opacity:0.5;
+}
+.sidebar:hover, .contactme a:hover, .categories a:hover {
+  transition: color 0.5s ease, opacity 0.5s ease;
+  opacity: 1;
+}
