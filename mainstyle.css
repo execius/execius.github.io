@@ -1,7 +1,7 @@
 :root{
   --primary_background_clr : #000000;
-  --primary_text_clr: #000000;
-  --text-background-clr: #ffffff;
+  --primary_text_clr: #ffffff;
+  --text-background-clr:#ff0000;
 }
 h1,h2,h4,h3,h5,h6 {
   font-weight: 600;
@@ -13,17 +13,19 @@ h1,h2,h4,h3,h5,h6 {
   color:var(--primary_text_clr);
 }
 .button {
+  font-weight: 600;
   display: flex;
   flex-direction: row;
   opacity:0.7;
   padding : 4px;
-  color:var(--primary_text_clr) ;
-  background-color: var(--text-background-clr);
+  color:var(--text-background-clr) ;
+  background-color:var(--primary_background_clr);
   text-decoration: none;
   justify-content: space-evenly;
 }
 .round_image{
-  border: 2px solid white;
+  padding:7px;
+  border: 2px solid var(--text-background-clr);
   border-radius:50%;
 }
 .layout {
@@ -34,6 +36,7 @@ h1,h2,h4,h3,h5,h6 {
   display: flex;
   align-items:center;
   text-decoration: none;
+  background-color: black;
 }
 
 .bar_item{
@@ -65,33 +68,30 @@ body, p {
 }
 .sidebar{
   opacity:0.7;
-  width:200px;
-  flex-direction: column;
-  text-decoration: none;
-  background-color: black;
-  border-right: 1px solid #444;
-  height:100vh;
+  gap:20px;
+  width:auto;
+  flex-direction: row;
+  height:auto;
   padding-top: 8px;
-  padding: 10px 2px;
+  padding: 60px 60px;
   box-sizing: border-box;
+  justify-content: start;
+  align-items:start;
 
 }
 .whoami{
   font-size: 16px;
   flex-direction: column;
-  align-items: center;
+  text-align:left;
 }
 .contactme{
-  padding : 4px;
+  padding : 5px;
   gap:10px;
-  width :100px;
+  width :auto;
   line-height:1;
   font-size: 16px;
-  flex-direction: column;
-}
-.contactme .button {
-
-  opacity:0.5;
+  flex-direction: row;
+  justify-content: center;
 }
 
 .button:hover, .sidebar:hover {
