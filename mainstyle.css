@@ -94,7 +94,8 @@ body, p {
 }
 
 .feed {
-  width:90%;
+  max-width:90%;
+
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 20px;
@@ -105,10 +106,9 @@ body, p {
   display:flex;
   flex-direction: column;
   justify-content:flex-start;
-  width:100%;
+  max-width:100%;
   aspect-ratio: 1 / 1;
   opacity:0.7;
-  align-items:center;
   border: 2px solid var(--text-background-clr);
   border-radius:15px;
   color:var(--primary_text_clr) ;
@@ -119,27 +119,28 @@ body, p {
 }
 .feed-subitem{
   display:flex;
-  width:100%;
+  max-width:100%;
   color:var(--primary_text_clr) ;
 }
 .feed-subitem.image {
-  width: 100%;
+  max-width:100%;
   height: auto;
   object-fit: cover;
 }
 .feed-subitem.information{
+  margin:10px;
   display: flex;
   justify-content:space-between;
   flex-direction:row;
-  width: 100%;
+  max-width: 100%;
   margin-top: auto;
   box-sizing:border-box;
   color:var(--text-background-clr);
   opacity:1;
 
 }
-.feed-subitem.description , .feed-subitem.title , .feed-subitem.information{
-  width: 100%;
+.feed-subitem.description , .feed-subitem.title {
+  max-width: 100%;
   margin-left:15px;
 }
 .contactme{
