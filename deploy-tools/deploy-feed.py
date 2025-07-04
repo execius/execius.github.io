@@ -23,7 +23,7 @@ def generate_feed_html(item):
             <p class="feed-subitem description">{item['description']}</p>\
             <div class="feed-subitem information">\
               <div class="feed-subitem information author">\
-                <img class="feed-subitem round_image" src="{item['author-profile']}" height=30 width=30>\
+                <i class="fa-solid fa-user fa-2x"></i>\
                 <p class="button feed-subitem information author-username">{item['author-username']}</p>\
               </div>\
               <p class="button feed-subitem information posting-date">{item['date']}</p>\
