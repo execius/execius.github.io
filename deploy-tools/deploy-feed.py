@@ -2,9 +2,11 @@
 import json
 from pathlib import Path
 
+main_directory = Path("../")
+directories = [main_directory] + list(main_directory.glob("*/"))
 FEED_DIR = Path("../feed/posts/")
 TEMPLATE_FILE="index.html"
-feed_templates_files_tupple_lst={("../template.html","../index.html"),("../feed/template.html","../feed/index.html")}
+feed_templates_files_tupple_lst=[(f"{directory}/template.html",f"{directory}/index.html") for directory in directories ]
 
 
 def load_feed_items():
@@ -33,9 +35,13 @@ def generate_feed_html(item):
     """
 
 def build_page(feed_items,file_template_tuple):
-    with open(file_template_tuple[0], encoding="utf-8") as f:
-        html = f.read()
+    try :
+        with open(file_template_tuple[0], encoding="utf-8") as f:
+            html = f.read()
 
+    except:
+        print(f"no template file :{file_template_tuple[0]}\nskiping")
+        return 0
     feed_html = "\n".join(generate_feed_html(item) for item in feed_items)
     html = html.replace("<!-- Feed-slot -->", feed_html)
 
