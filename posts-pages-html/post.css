@@ -1,0 +1,37 @@
+
+:root{
+  --code-background-clr:#440000;
+  --code-text-clr:#aaaaaa;
+  --post-bg-clr:#090909;
+}
+.post {
+
+  margin:30px auto;
+  display:flex;
+  flex-direction:column;
+  max-width: 1300px;
+  box-sizing: border-box;
+  overflow-wrap: break-word; 
+  align-items:center;
+  background-color:var(--post-bg-clr);
+}
+
+.sourceCode ,pre , .shell , [class^="language"] {
+  display:block;
+  box-sizing: border-box;
+  max-width:90%;
+  padding:10px;
+  background-color: var(--code-background-clr);
+  color:var(--code-text-clr);
+  overflow-x: auto;
+  white-space: pre;        /* Wrap lines if you prefer */
+}
+code {
+  padding:5px;
+  background-color: var(--code-background-clr);
+  color:var(--code-text-clr);
+
+}
+ul li {
+  color:var(--primary_text_clr);
+}
