@@ -5,15 +5,40 @@ import re
 from pathlib import Path
 
 main_directory = Path("../")
-html_posts_dir = "../html-posts"
-post_template_path = html_posts_dir+"/template.html"
+root_path="../"
+rsc_path=root_path + "/rsc/"
+jsons_path=rsc_path + "/json/"
+htmls_path=rsc_path+"/html"
+templates_path= htmls_path+ "/templates/"
+html_posts_path = "rsc/html/posts/"
+print(html_posts_path)
+
+
+html_pages_files = {
+        "home" : root_path + "/index.html",
+        "feed" : htmls_path+"/feed"+ "/index.html",
+        "topics" : htmls_path+"/topics"+ "/index.html",
+        "resources" : htmls_path+"/resources"+ "/index.html",
+        }
+
+templates = {
+        "home" : templates_path+"/home/template.html",
+        "post" : templates_path+"/post/template.html",
+        "feed" : templates_path+"/feed/template.html",
+        "topics" : templates_path+"/topics/template.html",
+        "resources" : templates_path+"/resources/template.html",
+        }
+json_files = {
+        "post" : jsons_path+"/posts/posts.json",
+        "topics" : jsons_path+"/topics/topics.json",
+        "resources" : jsons_path+"/resources/resources.json",
+        }
+
 directories = [main_directory] + list(main_directory.glob("*/"))
-FEED_POSTS_FILE = Path("../feed/posts/posts.json")
-TEMPLATE_FILE="index.html"
-feed_templates_files_tupple_lst=[(f"{directory}/template.html",f"{directory}/index.html") for directory in directories ]
 
 
-def load_feed_items(posts_file_json):
+#loads json items from a file
+def load_json_items(posts_file_json):
     items = []
     with open(posts_file_json,"r",encoding="utf-8") as f:
         data = json.load(f)
@@ -22,10 +47,49 @@ def load_feed_items(posts_file_json):
         items.append(data[key])
     return items
 
-def generate_feed_html(item):
 
-    return f"""\
-          <a class="feed-item" href="{item['post-page-html-path']}">\
+
+posts_items = load_json_items(json_files['post'])
+
+
+def get_text(file_path):
+    try:
+        with open(file_path,"r", encoding="utf-8") as f:
+            text = f.read()
+            f.close()
+            return text
+    except:
+        print("couldn't read html file:" ,file_path)
+        return ""
+
+def write_text(file_path,text):
+    try:
+        with open(file_path,"w", encoding="utf-8") as f:
+            f.write(text)
+            f.close()
+    except:
+        print("couldn't write to html file:" ,file_path)
+        return ""
+
+
+
+def make_page_text(template_text,html_text,replaced_text):
+    try:
+        result = template_text.replace(replaced_text,html_text)
+        return result
+    except:
+        print("error making page")
+        return -1
+        pass
+def make_page_file(template_path,html_text,slot_text,result_path):
+    template_text = get_text(template_path)
+    page_text = make_page_text(template_text,html_text,slot_text)
+    write_text(result_path,page_text)
+
+def generate_feed_item(item):
+
+    result = f"""\
+          <a class="feed-item" href="{html_posts_path}/{item['title']}.html">\
             <img class="feed-subitem image" src="{item['image']}">\
             <h2 class="feed-subitem title" >{item['title']}</h2>\
             <p class="feed-subitem description">{item['description']}</p>\
@@ -39,48 +103,34 @@ def generate_feed_html(item):
             </div>\
           </a>\
     """
+    return result
+def generate_feed_html(items_array):
+    feed_html = "\n".join(generate_feed_item(item) for item in items_array)
+    return feed_html
 
-def make_post_page(item,post_template_p,html_posts_dir):
-    html_post_page_path="../"+item['post-page-html-path']
-    post_html_path="../"+item['post-html-path']
-    try:
-
-        with open(post_html_path,"r", encoding="utf-8") as f:
-            post_html_text = f.read()
-        with open(post_template_p,"r", encoding="utf-8") as f:
-            template_html = f.read()
-            html_post_page = template_html.replace("<!-- post-slot -->",post_html_text)
-            f.close()
-        with open(html_post_page_path,"w", encoding="utf-8") as f:
-            f.write(html_post_page)
-            f.close()
-        print(f"making post with title {item['title']} done")
-    except:
-        print(f"error making post page : {markdown_path}")
-        return -1
-        pass
-
-def build_page(feed_items,file_template_tuple):
-    try :
-        with open(file_template_tuple[0],"r", encoding="utf-8") as f:
-            html = f.read()
-            f.close()
-    except:
-        print(f"no template file :{file_template_tuple[0]}\nskiping")
-        return 0
-    feed_html = "\n".join(generate_feed_html(item) for item in feed_items)
-    html = html.replace("<!-- Feed-slot -->", feed_html)
+def build_feed(feed_items):
+    feed_html=generate_feed_html(feed_items)
+    feed_template=templates['feed']
+    slot_text="<!-- Feed-slot -->"
+    feed_page = html_pages_files['feed']
+    make_page_file(feed_template,feed_html,slot_text,feed_page)
+    make_page_file(templates['home'],feed_html,slot_text,html_pages_files['home'])
+    print("Feed built successfully into", feed_page)
 
 
-    with open(file_template_tuple[1], "w", encoding="utf-8") as f:
-        f.write(html)
-        f.close()
-    print("Feed built successfully into", file_template_tuple[1])
 
-feed_items = load_feed_items(FEED_POSTS_FILE) 
-for item in feed_items:
-    ret = make_post_page(item,post_template_path,html_posts_dir)
-    if ret == -1 :
-        feed_items.remove(item)
-for file_templ_tup in feed_templates_files_tupple_lst:
-    build_page(feed_items,file_templ_tup)
+def make_posts(posts_items):
+    slot_text="<!-- post-slot -->"
+    post_template = templates['post']
+    for item in posts_items:
+        raw_post_file = html_posts_path+"/raw_html/"+item['title']+".html"
+        post_page_file = html_posts_path+"/"+item['title']+".html"
+        print(post_page_file)
+        raw_post_text = get_text(raw_post_file)
+        make_page_file(post_template,raw_post_text,slot_text,post_page_file)
+
+
+make_posts(posts_items)
+build_feed(posts_items)
+make_page_file(templates['resources'],"","",html_pages_files['resources'])
+make_page_file(templates['topics'],"","",html_pages_files['topics'])
