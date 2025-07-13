@@ -1,0 +1,16 @@
+{
+  "post1": {
+  "title": "phoenix stack 5 - stack buffer overflow",
+  "description": "a brief write-up (and exploit) on why you should read the ***** manual",
+  "image": "rsc/imgs/pixel.jpg",
+  "author-username": "Execius",
+  "date": "2025-07-12"
+},
+  "post2":{
+  "title": "phoenix final 1 - blind format string",
+  "description": "can you do a format string attack even if you cannot see the leak ? let's see",
+  "image": "rsc/imgs/touch.jpg",
+  "author-username": "imsec",
+  "date": "2025-07-03"
+}
+}
