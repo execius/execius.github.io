@@ -1,7 +1,5 @@
 
 import json
-import pypandoc
-import re
 from pathlib import Path
 import sys
 from os.path import abspath
