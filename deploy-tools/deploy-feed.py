@@ -3,15 +3,30 @@ import json
 import pypandoc
 import re
 from pathlib import Path
+import sys
+from os.path import abspath
+
+
+root_path=abspath("../")+"/"
+base_path=root_path
+try :
+    if sys.argv[1] == "main":
+        base_path="/"
+except:
+    pass
+print(root_path)
+print(base_path)
 
 main_directory = Path("../")
-root_path="../"
 rsc_path=root_path + "/rsc/"
 jsons_path=rsc_path + "/json/"
 htmls_path=rsc_path+"/html"
 templates_path= htmls_path+ "/templates/"
-html_posts_path = "rsc/html/posts/"
-print(html_posts_path)
+html_posts_path = htmls_path+"/posts/"
+base_slot = "<!-- base-slot -->"
+
+local_link_path=abspath("../../../../../Documents/obsidianvault")
+site_link_path="/rsc/html/posts/"
 
 
 html_pages_files = {
@@ -76,6 +91,7 @@ def write_text(file_path,text):
 def make_page_text(template_text,html_text,replaced_text):
     try:
         result = template_text.replace(replaced_text,html_text)
+        result = result.replace(base_slot,base_path)
         return result
     except:
         print("error making page")
@@ -127,6 +143,7 @@ def make_posts(posts_items):
         post_page_file = html_posts_path+"/"+item['title']+".html"
         print(post_page_file)
         raw_post_text = get_text(raw_post_file)
+        raw_post_text = raw_post_text.replace(local_link_path,site_link_path)
         make_page_file(post_template,raw_post_text,slot_text,post_page_file)
 
 
