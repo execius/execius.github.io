@@ -9,11 +9,6 @@ from os.path import abspath
 
 root_path=abspath("../")+"/"
 base_path=root_path
-try :
-    if sys.argv[1] == "main":
-        base_path="/"
-except:
-    pass
 print(root_path)
 print(base_path)
 
@@ -25,6 +20,11 @@ templates_path= htmls_path+ "/templates/"
 html_posts_path = htmls_path+"/posts/"
 base_slot = "<!-- base-slot -->"
 
+try :
+    if sys.argv[1] == "main":
+        base_path="/"
+except:
+    pass
 local_link_path=abspath("../../../../../Documents/obsidianvault")
 site_link_path="/rsc/html/posts/"
 
@@ -104,6 +104,12 @@ def make_page_file(template_path,html_text,slot_text,result_path):
 
 def generate_feed_item(item):
 
+    try :
+        if sys.argv[1] == "main":
+            base_path="/"
+        html_posts_path="/rsc/html/posts/"
+    except:
+        pass
     result = f"""\
           <a class="feed-item" href="{html_posts_path}/{item['title']}.html">\
             <img class="feed-subitem image" src="{item['image']}">\
