@@ -1,5 +1,5 @@
-:root{
-  --primary_background_clr : #000000;
+    :root{
+    --primary_background_clr : #000000;
   --primary_text_clr: #bbbbbb;
   --text-background-clr:#bf0000;
   --feed-item-border-clr:#999999;
@@ -173,7 +173,7 @@ p {
   font-size: 1.1rem;
   font-weight: 600;
   color: var(--primary_text_clr);
-  margin: 10px 15px;
+  margin: 10px 10px;
 }
 .feed-subitem.information{
   margin:10px;
@@ -195,6 +195,8 @@ p {
   
 .feed-subitem.description , .feed-subitem.title {
   max-width: 100%;
+  max-height:12%;
+  height:12%;
   margin-left:15px;
 }
 .contactme{

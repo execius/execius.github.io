@@ -177,6 +177,7 @@ def make_topics(topics_items):
 
 def generate_topics_feed_item(item):
     html_posts_path = htmls_path+"/posts/"
+    topics_path =  htmls_path+"/topics/"
     try :
         if sys.argv[1] == "main":
             base_path="/"
@@ -186,7 +187,7 @@ def generate_topics_feed_item(item):
         pass
     result = f"""\
           <a class="feed-item" href="{topics_path}/{item['title']}.html">\
-            <img class="feed-subitem image" src="{item['image']}">\
+            <img class="feed-subitem image" src="{item['image']}" >\
             <h2 class="feed-subitem title" >{item['title']}</h2>\
             <p class="feed-subitem description">{item['description']}</p>\
           </a>\

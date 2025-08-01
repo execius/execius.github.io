@@ -11,8 +11,16 @@
   "title": "phoenix final 1 - blind format string",
   "description": "can you do a format string attack even if you cannot see the leak ? let's see",
   "image": "rsc/imgs/touch.jpg",
-  "author-username": "Execius",
+  "author-username": "execius",
   "date": "2025-07-03",
+  "topics": "binary exploitation"
+},
+  "post3":{
+  "title": "phoenix heap 3 - classic heap unlink attack",
+  "description": "exploit the infamous doug lea heap implementation, classic unlink!",
+  "image": "rsc/imgs/skull_pixel.png",
+  "author-username": "execius",
+  "date": "2025-08-1",
   "topics": "binary exploitation"
 }
 }
