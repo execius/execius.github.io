@@ -167,11 +167,9 @@ def make_topics(topics_items):
         topic_name = topic_item['title']
         for item in posts_items:
             post_topics = item['topics'].split(',')
-            print(post_topics)
             if topic_name in post_topics:
                 topic_posts.append(item)
         topic_feed_html = generate_feed_html(topic_posts)
-        print(topic_feed_html)
         topic_page_file = topics_path+"/"+topic_item['title']+".html"
         make_page_file(topic_template,topic_feed_html,slot_text,topic_page_file)
         make_page_file(topic_page_file,topic_name,topic_name_slot,topic_page_file)
@@ -182,7 +180,8 @@ def generate_topics_feed_item(item):
     try :
         if sys.argv[1] == "main":
             base_path="/"
-        html_posts_path="/rsc/html/posts/"
+        topics_path = "/rsc/html/topics/"
+     
     except:
         pass
     result = f"""\
@@ -203,7 +202,6 @@ def build_topics_feed(topics_items):
     slot_text="<!-- topics-slot -->"
     topics_page = html_pages_files['topics']
     make_page_file(topics_template,topic_feed,slot_text,topics_page)
-    print("done writing to ",topics_page)
 
 make_posts(posts_items)
 make_topics(topics_items)
