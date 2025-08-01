@@ -1,0 +1,13 @@
+
+{
+  "binary_exploitation": {
+  "title": "binary exploitation",
+  "description": "buffer overflows and protection bypasses , and some more!",
+  "image": "rsc/imgs/landscape_pixel.png"
+},
+  "reverse_engineering":{
+  "title": "reverse engineering",
+  "description": "weird devices and exotic binaries , all about reverse engineering",
+  "image": "rsc/imgs/space.jpg"
+}
+}

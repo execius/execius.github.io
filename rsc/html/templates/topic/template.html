@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html class="default_colors_property">
-  <base href="/" target="">
+  <base href="<!-- base-slot -->" target="">
   <head>
     <link rel="stylesheet" href="rsc/css/mainstyle.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
@@ -27,9 +27,11 @@
     <div class="layout">
       <main class="content">
 
-        <h1>Topics</h1>
-        <div class="feed">           <a class="feed-item" href="/home/qbit/tech/coding/web/Imranesec.github.io//rsc//html/topics//binary exploitation.html">            <img class="feed-subitem image" src="rsc/imgs/landscape_pixel.png">            <h2 class="feed-subitem title" >binary exploitation</h2>            <p class="feed-subitem description">buffer overflows and protection bypasses , and some more!</p>          </a>    
-          <a class="feed-item" href="/home/qbit/tech/coding/web/Imranesec.github.io//rsc//html/topics//reverse engineering.html">            <img class="feed-subitem image" src="rsc/imgs/space.jpg">            <h2 class="feed-subitem title" >reverse engineering</h2>            <p class="feed-subitem description">weird devices and exotic binaries , all about reverse engineering</p>          </a>     </div>
+        <h1><!-- topic-name-slot --></h1>
+        <div class="feed"> 
+          <!-- feed-slot --> 
+
+        </div>
       </main>
     </div>
     <footer>
