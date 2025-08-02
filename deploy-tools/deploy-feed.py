@@ -17,7 +17,6 @@ htmls_path=rsc_path+"/html"
 templates_path= htmls_path+ "/templates/"
 html_posts_path = htmls_path+"/posts/"
 topics_path = htmls_path+"/topics/"
-base_slot = "<!-- base-slot -->"
 
 try :
     if sys.argv[1] == "main":
@@ -27,6 +26,20 @@ except:
 local_link_path=abspath("../../../../../Documents/obsidianvault")
 site_link_path="/rsc/html/posts/"
 
+slots = {
+        "stdhead" : "<!-- stdhead-slot -->",
+        "feed" : "<!-- feed-slot -->",
+        "myinfo" :"<!-- myinfo-slot -->",
+        "footer" :"<!-- footer-slot -->",
+        "navbar" :"<!-- navbar-slot -->",
+        "base" :"<!-- base-slot -->",
+        "topics" :"<!-- topics-slot -->",
+        "description" : "<!-- description-slot -->"}
+filler_slots = {
+        "stdhead":"<!-- stdhead-slot -->",
+        "myinfo" :"<!-- myinfo-slot -->",
+        "footer" :"<!-- footer-slot -->",
+        "navbar" :"<!-- navbar-slot -->"}
 
 html_pages_files = {
         "home" : root_path + "/index.html",
@@ -64,8 +77,6 @@ def load_json_items(posts_file_json):
 
 
 
-posts_items = load_json_items(json_files['post'])
-topics_items = load_json_items(json_files['topics'])
 
 
 def get_text(file_path):
@@ -77,6 +88,13 @@ def get_text(file_path):
     except:
         print("couldn't read html file:" ,file_path)
         return ""
+
+global_fillers = {
+        "myinfo" :get_text(htmls_path+"/global/myinfo.html"),
+        "footer" :get_text(htmls_path+"/global/footer.html"),
+        "navbar" :get_text(htmls_path+"/global/navbar.html"),
+        "stdhead": get_text(htmls_path+"/global/std_head_content.html")
+        }
 
 def write_text(file_path,text):
     try:
@@ -92,7 +110,9 @@ def write_text(file_path,text):
 def make_page_text(template_text,html_text,replaced_text):
     try:
         result = template_text.replace(replaced_text,html_text)
-        result = result.replace(base_slot,base_path)
+        result = result.replace(slots['base'],base_path)
+        for key in filler_slots:
+            result = result.replace(filler_slots[key],global_fillers[key])
         return result
     except Exception as e:
         print(e)
@@ -173,6 +193,7 @@ def make_topics(topics_items):
         topic_page_file = topics_path+"/"+topic_item['title']+".html"
         make_page_file(topic_template,topic_feed_html,slot_text,topic_page_file)
         make_page_file(topic_page_file,topic_name,topic_name_slot,topic_page_file)
+        make_page_file(topic_page_file,topic_item['description'],slots['description'],topic_page_file)
 
 
 def generate_topics_feed_item(item):
@@ -200,10 +221,12 @@ def generate_topics_feed_html(items_array):
 def build_topics_feed(topics_items):
     topic_feed=generate_topics_feed_html(topics_items)
     topics_template=templates['topics']
-    slot_text="<!-- topics-slot -->"
+    slot_text=slots['topics']
     topics_page = html_pages_files['topics']
     make_page_file(topics_template,topic_feed,slot_text,topics_page)
 
+posts_items = load_json_items(json_files['post'])
+topics_items = load_json_items(json_files['topics'])
 make_posts(posts_items)
 make_topics(topics_items)
 build_feed(posts_items)
