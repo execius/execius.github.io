@@ -34,7 +34,8 @@ slots = {
         "navbar" :"<!-- navbar-slot -->",
         "base" :"<!-- base-slot -->",
         "topics" :"<!-- topics-slot -->",
-        "description" : "<!-- description-slot -->"}
+        "description" : "<!-- description-slot -->",
+        "title" : "<!-- title-slot -->"}
 filler_slots = {
         "stdhead":"<!-- stdhead-slot -->",
         "myinfo" :"<!-- myinfo-slot -->",
@@ -176,6 +177,8 @@ def make_posts(posts_items):
         raw_post_text = get_text(raw_post_file)
         raw_post_text = raw_post_text.replace(local_link_path,site_link_path)
         make_page_file(post_template,raw_post_text,slot_text,post_page_file)
+        make_page_file(post_page_file,item['description'],slots['description'],post_page_file)
+        make_page_file(post_page_file,item['title'],slots['title'],post_page_file)
 
 
 def make_topics(topics_items):
@@ -194,6 +197,7 @@ def make_topics(topics_items):
         make_page_file(topic_template,topic_feed_html,slot_text,topic_page_file)
         make_page_file(topic_page_file,topic_name,topic_name_slot,topic_page_file)
         make_page_file(topic_page_file,topic_item['description'],slots['description'],topic_page_file)
+        make_page_file(topic_page_file,topic_item['title'],slots['title'],topic_page_file)
 
 
 def generate_topics_feed_item(item):
