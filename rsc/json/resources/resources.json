@@ -2,17 +2,17 @@
 {
 
 
-  "endianness":{
+  "x8664asm":{
   "title": "x86_64 assembly",
   "description": "brief informations about x8664 calling conventions",
   "author-username": "execius"
 },
-  "endianness":{
+  "virtmem":{
   "title": "virtual memory",
   "description": "about virtual memory in linux",
   "author-username": "execius"
 },
-  "endianness":{
+  "stkframe":{
   "title": "Stack frame",
   "description": "about a process' stack frame",
   "author-username": "execius"
