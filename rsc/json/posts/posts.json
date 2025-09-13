@@ -1,6 +1,6 @@
 {
   "post4":{
-  "title": "../../html/posts/Fusion level 05 - barely bypassing PIE",
+  "title": "Fusion level 05 - barely bypassing PIE",
   "description": "predicting file descriptors , creating format string from buffer overflow , and then some",
   "image": "/rsc/imgs/fantasy_city.png",
   "author-username": "execius",
