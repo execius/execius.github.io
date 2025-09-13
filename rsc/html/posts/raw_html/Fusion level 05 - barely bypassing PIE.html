@@ -1,42 +1,4 @@
-<!DOCTYPE html>
-<html class="default_colors_property">
-  <base href="/" target="">
-  <head>
-    <link rel="stylesheet" href="rsc/css/post.css">
-    <meta name="description" content="predicting file descriptors , creating format string from buffer overflow , and then some">
-    <title>Execius : Fusion level 05 - barely bypassing PIE</title>
-          
-    <link rel="stylesheet" href="rsc/css/mainstyle.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <meta charset="UTF-8">
-    <meta name="keywords" content="binary exploitation, hacking, pwn, reverse engineering , Execius">
-    <meta name="author" content="Execius">
-
-
-  </head>
-
-  <body>
-          
-    <nav class="bar navbar">
-
-      <div class="home_logo bar_item">
-        <a class="button logo_text"  href="index.html" >Execius</a>
-      </div>
-
-      <div class="categories bar_item">
-        <a class="button" href="./rsc/html/topics/index.html"><i class="fa-solid fa-folder"></i>Topics</a>
-        <a class="button" href="rsc/html/feed/index.html"><i class="fa-solid fa-square-rss"></i>Feed</a>
-        <a class="button" href="rsc/html/resources/index.html"><i class="fa-solid fa-book"></i> resources </a>
-      </div>
-
-    </nav>
-
-
-    <div class="layout">
-      <main class="content">
-
-        <div class="post">
-          <!doctype html>
+<!doctype html>
 <html>
     <head>
         <title>Fusion , finding the devil in the details and barely bypassing PIE</title>
@@ -4743,7 +4705,7 @@ bail<span class="token operator">:</span>
 }</style>"<marker id="mermaid_arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="strokeWidth" markerWidth="8" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowheadPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"></path></marker>"</svg></button></pre>
 <ul>
 <li dir="auto">we have here a program that let's you insert 'registrations' to the data base and view them etc... , here's more details :</li>
-<li dir="auto">the main function sets up its usual stuff , the most notable thing is that from each new client , a connection is  created and with it a new <a data-href="File descriptor" href="/rsc/html/posts//File%20descriptor.html" class="internal-link" target="_blank" rel="noopener nofollow">File descriptor</a> is made , and then a 'task' created for that specific client .</li>
+<li dir="auto">the main function sets up its usual stuff , the most notable thing is that from each new client , a connection is  created and with it a new <a data-href="File descriptor" href="/home/qbit/Documents/obsidianvault/File%20descriptor.html" class="internal-link" target="_blank" rel="noopener nofollow">File descriptor</a> is made , and then a 'task' created for that specific client .</li>
 <li dir="auto">a task is a form of asynchronous computing , you pass to it a functions pointer , its argument and stack size and it is executed in the program's memory but is executed separately , meaning it is not like the previous challenges where a fork is created for each client ,  a major catch of this is that if the task does something like illegal memory access , the whole program will crash not just the task, this will be important later .</li>
 <li dir="auto">now the task that is created for each client is called <code>childtask</code> and it simply provides five commands :
 <ol>
@@ -5130,17 +5092,3 @@ whoami: cannot <span class="token function">find</span> name <span class="token 
 <h1 data-heading="and voila." dir="auto">and voila.</h1>
     </body>
 </html>
-        </div>
-      </main>
-    </div>
-  </body>
-      
-    <footer>
-
-      <div class="contactme bar_item">
-        <a class="button" href="https://x.com/execius"><i class="fa-brands fa-x-twitter fa-2x"></i></a> 
-      </div>
-    </footer>
-
-</html> 
-
