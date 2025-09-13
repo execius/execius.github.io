@@ -1,6 +1,22 @@
 
 {
 
+
+  "endianness":{
+  "title": "x86_64 assembly",
+  "description": "brief informations about x8664 calling conventions",
+  "author-username": "execius"
+},
+  "endianness":{
+  "title": "virtual memory",
+  "description": "about virtual memory in linux",
+  "author-username": "execius"
+},
+  "endianness":{
+  "title": "Stack frame",
+  "description": "about a process' stack frame",
+  "author-username": "execius"
+},
   "endianness":{
   "title": "endianness",
   "description": "byte arrangements",
