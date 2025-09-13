@@ -1,4 +1,12 @@
 {
+  "post4":{
+  "title": "../../html/posts/Fusion level 05 - barely bypassing PIE",
+  "description": "predicting file descriptors , creating format string from buffer overflow , and then some",
+  "image": "/rsc/imgs/fantasy_city.png",
+  "author-username": "execius",
+  "date": "2025-09-13",
+  "topics": "binary exploitation"
+},
   "post3":{
   "title": "phoenix heap 3 - classic heap unlink attack",
   "description": "exploiting the infamous doug lea heap implementation, classic unlink!",
