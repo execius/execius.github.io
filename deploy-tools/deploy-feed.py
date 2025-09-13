@@ -231,7 +231,9 @@ def build_topics_feed(topics_items):
 
 posts_items = load_json_items(json_files['post'])
 topics_items = load_json_items(json_files['topics'])
+resources_items = load_json_items(json_files['resources'])
 make_posts(posts_items)
+make_posts(resources_items)
 make_topics(topics_items)
 build_feed(posts_items)
 build_topics_feed(topics_items)
