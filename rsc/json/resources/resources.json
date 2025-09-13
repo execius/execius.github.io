@@ -1,6 +1,11 @@
 
 {
 
+  "endianness":{
+  "title": "endianness",
+  "description": "byte arrangements",
+  "author-username": "execius"
+},
   "stkcallconv":{
   "title": "The stack and calling conventions in x86.html",
   "description": "about what it says in the title",
