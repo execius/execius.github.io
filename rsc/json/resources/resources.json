@@ -4,5 +4,15 @@
   "title": "File descriptor",
   "description": "about file descriptors",
   "author-username": "execius"
+},
+  "THEHEAP":{
+  "title": "THE HEAP",
+  "description": "about the heap in malloc implementation",
+  "author-username": "execius"
+},
+  "filedesc":{
+  "title": "malloc source code analysis",
+  "description": "dough lea malloc source code Analysis",
+  "author-username": "execius"
 }
 }
