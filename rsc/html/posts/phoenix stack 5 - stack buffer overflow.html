@@ -5195,8 +5195,8 @@ mjx-c.mjx-c2061::before {
 <li dir="auto">in this challenge I am working with a an amd64 little indian architecture on linux , there is also no protections on the binary and the aslr is disabled on the machine(address space layout randomization)</li>
 <li dir="auto">i began by reading the infamous article Phrack 48:14 , which is named same as this write up "smashing the stack for fun and profit" , here is a link :<a rel="noopener nofollow" class="external-link" href="https://phrack.org/issues/49/14#article" target="_blank">https://phrack.org/issues/49/14#article</a></li>
 <li dir="auto">I also watched the video by liveoverflow in the series named binary exploitation , same titre .</li>
-<li dir="auto">I will not go into how the stack works as it is already explained in the file <a data-href="The stack and calling conventions in x86" href="/rsc/html/posts//The%20stack%20and%20calling%20conventions%20in%20x86.html" class="internal-link" target="_blank" rel="noopener nofollow">The stack and calling conventions in x86</a> </li>
-<li dir="auto">same for <a data-href="x86_64 assembly" href="/rsc/html/posts//x86_64%20assembly.html" class="internal-link" target="_blank" rel="noopener nofollow">x86_64 assembly</a> and <a data-href="virtual memory" href="/rsc/html/posts//virtual%20memory.html" class="internal-link" target="_blank" rel="noopener nofollow">virtual memory</a></li>
+<li dir="auto">I will not go into how the stack works as it is already explained in the file <a data-href="The stack and calling conventions in x86" href="/home/qbit/Documents/obsidianvault/The%20stack%20and%20calling%20conventions%20in%20x86.html" class="internal-link" target="_blank" rel="noopener nofollow">The stack and calling conventions in x86</a> </li>
+<li dir="auto">same for <a data-href="x86_64 assembly" href="/home/qbit/Documents/obsidianvault/x86_64%20assembly.html" class="internal-link" target="_blank" rel="noopener nofollow">x86_64 assembly</a> and <a data-href="virtual memory" href="/home/qbit/Documents/obsidianvault/virtual%20memory.html" class="internal-link" target="_blank" rel="noopener nofollow">virtual memory</a></li>
 </ul>
 <h2 data-heading="analysis of the binary" dir="auto">analysis of the binary</h2>
 <ul>
@@ -5318,7 +5318,7 @@ syscall
 }</style>"<marker id="mermaid_arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="strokeWidth" markerWidth="8" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowheadPath" style="stroke-width: 1; stroke-dasharray: 1, 0;"></path></marker>"</svg></button></pre>
 </li>
 <li dir="auto">
-<p>second we move the value 0x68732f6e9622f into rax , that value is the ascii representation of the string "/bin/sh"  , but reversed , because of the <a data-href="endianness" href="/rsc/html/posts//endianness.html" class="internal-link" target="_blank" rel="noopener nofollow">endianness</a> of the system (little endian) </p>
+<p>second we move the value 0x68732f6e9622f into rax , that value is the ascii representation of the string "/bin/sh"  , but reversed , because of the <a data-href="endianness" href="/home/qbit/Documents/obsidianvault/endianness.html" class="internal-link" target="_blank" rel="noopener nofollow">endianness</a> of the system (little endian) </p>
 <pre class="language-nasm" tabindex="0"><code class="is-loaded language-nasm">mov <span class="token register variable">rax</span>, <span class="token number">0x68732f6e69622f</span>
 </code><button class="copy-code-button"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="svg-icon lucide-copy"><rect x="8" y="8" width="14" height="14" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path><style>
 :root {
@@ -5509,7 +5509,7 @@ Disassembly of section .text:
 </ul>
 <h2 data-heading="making the exploit" dir="auto">making the exploit</h2>
 <ul>
-<li dir="auto">now we know that the <a data-href="Stack frame" href="/rsc/html/posts//Stack%20frame.html" class="internal-link" target="_blank" rel="noopener nofollow">Stack frame</a> of the start level function will look like this :</li>
+<li dir="auto">now we know that the <a data-href="Stack frame" href="/home/qbit/Documents/obsidianvault/Stack%20frame.html" class="internal-link" target="_blank" rel="noopener nofollow">Stack frame</a> of the start level function will look like this :</li>
 </ul>
 <pre class="language-text" tabindex="0"><code class="is-loaded language-text">+---------------------------+  &lt;-- Higher memory address
 |  Return Address           |  (Saved by the `call` instruction)

@@ -4903,7 +4903,7 @@ undefined
 </ul>
 <h1 data-heading="what do the stack do ? and how it is split for each function call?" dir="auto">what do the stack do ? and how it is split for each function call?</h1>
 <ul>
-<li dir="auto">The main function of the stack is to keep track of execution environment of the entire process and to maintain the control-flow between function calls. This means keeping track of the important details for every function call. This is done by using "Stack Frames". Essentially a new "<a data-href="Stack frame" href="/rsc/html/posts//Stack%20frame.html" class="internal-link" target="_blank" rel="noopener nofollow">Stack frame</a> " is created on the stack when a new function is executed.</li>
+<li dir="auto">The main function of the stack is to keep track of execution environment of the entire process and to maintain the control-flow between function calls. This means keeping track of the important details for every function call. This is done by using "Stack Frames". Essentially a new "<a data-href="Stack frame" href="/home/qbit/Documents/obsidianvault/Stack%20frame.html" class="internal-link" target="_blank" rel="noopener nofollow">Stack frame</a> " is created on the stack when a new function is executed.</li>
 </ul>
 <h1 data-heading="calling conventions" dir="auto">calling conventions</h1>
 <ul>
@@ -4918,7 +4918,7 @@ undefined
 <li dir="auto">ebp is assigned the curent value of the esp registers so now the state of the program before the function call is preserved .</li>
 <li dir="auto">the stack pointer is now set to ebp since it was the last value to be pushed into the stack </li>
 <li dir="auto">then we substract from esp to make space for our local vars so that the can be set and accessed relative to ebp.</li>
-<li dir="auto">the function's local addresses will be below ebp , since the stack grows down in memory , this effectively creates a new <a data-href="Stack frame" href="/rsc/html/posts//Stack%20frame.html" class="internal-link" target="_blank" rel="noopener nofollow">Stack frame</a> .</li>
+<li dir="auto">the function's local addresses will be below ebp , since the stack grows down in memory , this effectively creates a new <a data-href="Stack frame" href="/home/qbit/Documents/obsidianvault/Stack%20frame.html" class="internal-link" target="_blank" rel="noopener nofollow">Stack frame</a> .</li>
 <li dir="auto">when the function completes what it does , the esp is reset to ebp </li>
 <li dir="auto">then the value of ebp previously pushed is popped into ebp , restoring the stack state that was before the functions call . </li>
 <li dir="auto">the the return address previously pushed by the function call is popped into rip , this restores the program's control flow to it's precall state </li>
@@ -5017,7 +5017,7 @@ undefined
 <ul>
 <li dir="auto">Function arguments and local variables: In C these are referred to as automatic variables, since they are automatically created when a function is called. These variables also automatically disappear when the function returns (since the stack frame disappears), and this forms the primary semantic distinction between automatic and static (and global) variables: the latter have a perma- nent existence independent of the execution of functions</li>
 </ul>
-<p> <a href="/rsc/html/posts//index.html#assembly" class="tag" target="_blank" rel="noopener nofollow">#assembly</a>  <a href="/rsc/html/posts//index.html#computer_architecture" class="tag" target="_blank" rel="noopener nofollow">#computer_architecture</a> </p>
+<p> <a href="/home/qbit/Documents/obsidianvault/index.html#assembly" class="tag" target="_blank" rel="noopener nofollow">#assembly</a>  <a href="/home/qbit/Documents/obsidianvault/index.html#computer_architecture" class="tag" target="_blank" rel="noopener nofollow">#computer_architecture</a> </p>
 </li>
 </ul>
     </body>
