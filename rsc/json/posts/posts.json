@@ -18,7 +18,7 @@
   "post4":{
   "title": "Fusion level 05 - barely bypassing PIE",
   "description": "predicting file descriptors , creating format string from buffer overflow , and then some",
-  "image": "rsc/imgs/bw.png",
+  "image": "rsc/imgs/hexcirclepur.png",
   "author-username": "execius",
   "date": "2025-09-13",
   "topics": "binary exploitation"
