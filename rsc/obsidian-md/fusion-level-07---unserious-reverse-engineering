@@ -365,7 +365,8 @@ int main(int argc, char **argv, char **envp)
 - after background process which is used in all challenges and what i think is an initialization of the `pthread` library , we have `udp` variable set with the `get_udp_server_socket` , I think it is set to a `file descriptor` that enables writing to a socket after we as client connect to the challenge port.
 
 - next we have two calls to `register_cmd` function , so let's check that :
- ```c
+
+```c
 void register_cmd(unsigned int opcode, unsigned int flags, void *(*fp)(void *))
 {
   cmdtab *c;
@@ -377,7 +378,7 @@ void register_cmd(unsigned int opcode, unsigned int flags, void *(*fp)(void *))
 
   DL_APPEND(cmdtab_head, c);
 }
- ```
+```
  - it declares and allocates and initialized a `cmdtab` node  and calls `DL_APPEND` which obvious appends it to the doubly linked list .
 
 - back to `main` the calls to `register_cmd` have 1347961165 and 2280059729 as first arguments , which is the `opcode` field , interesting , both calls' flags are set to 0 which i guess means nothing , and the function pointer are set to `load_new_pakfile` and `execute_command`(??lol) respectively . so let's check those :
@@ -389,7 +390,7 @@ void *load_new_pakfile(void *arg)
   struct pa *p = (struct pa *)(arg);
   unsigned char *q;
   unsigned char *host, *port, *key = NULL;
-  unsigned char *pakfile;
+    unsigned char *pakfile;
   size_t pakfile_len;
 
   host = p->p;

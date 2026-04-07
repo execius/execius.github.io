@@ -453,22 +453,26 @@
 <p>after background process which is used in all challenges and what i think is an initialization of the <code>pthread</code> library , we have <code>udp</code> variable set with the <code>get_udp_server_socket</code> , I think it is set to a <code>file descriptor</code> that enables writing to a socket after we as client connect to the challenge port.</p>
 </li>
 <li>
-<p>next we have two calls to <code>register_cmd</code> function , so let's check that :
- ```c
-void register_cmd(unsigned int opcode, unsigned int flags, void <em>(</em>fp)(void <em>))
-{
-  cmdtab </em>c;</p>
+<p>next we have two calls to <code>register_cmd</code> function , so let's check that :</p>
 </li>
 </ul>
-<p>c = calloc(1, sizeof(cmdtab));
-  c-&gt;opcode = opcode;
-  c-&gt;flags = flags;
-  c-&gt;fp = fp;</p>
-<p>DL_APPEND(cmdtab_head, c);
-}
- <code>``
- - it declares and allocates and initialized a</code>cmdtab<code>node  and calls</code>DL_APPEND` which obvious appends it to the doubly linked list .</p>
+<div class="codehilite"><pre><span></span><code><span class="kt">void</span><span class="w"> </span><span class="nf">register_cmd</span><span class="p">(</span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">opcode</span><span class="p">,</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">flags</span><span class="p">,</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="p">(</span><span class="o">*</span><span class="n">fp</span><span class="p">)(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="p">))</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="n">cmdtab</span><span class="w"> </span><span class="o">*</span><span class="n">c</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">calloc</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">cmdtab</span><span class="p">));</span>
+<span class="w">  </span><span class="n">c</span><span class="o">-&gt;</span><span class="n">opcode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">opcode</span><span class="p">;</span>
+<span class="w">  </span><span class="n">c</span><span class="o">-&gt;</span><span class="n">flags</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">flags</span><span class="p">;</span>
+<span class="w">  </span><span class="n">c</span><span class="o">-&gt;</span><span class="n">fp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fp</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">DL_APPEND</span><span class="p">(</span><span class="n">cmdtab_head</span><span class="p">,</span><span class="w"> </span><span class="n">c</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
 <ul>
+<li>
+<p>it declares and allocates and initialized a <code>cmdtab</code> node  and calls <code>DL_APPEND</code> which obvious appends it to the doubly linked list .</p>
+</li>
 <li>
 <p>back to <code>main</code> the calls to <code>register_cmd</code> have 1347961165 and 2280059729 as first arguments , which is the <code>opcode</code> field , interesting , both calls' flags are set to 0 which i guess means nothing , and the function pointer are set to <code>load_new_pakfile</code> and <code>execute_command</code>(??lol) respectively . so let's check those :</p>
 </li>
@@ -481,7 +485,7 @@ void register_cmd(unsigned int opcode, unsigned int flags, void <em>(</em>fp)(vo
 <span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">pa</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">pa</span><span class="w"> </span><span class="o">*</span><span class="p">)(</span><span class="n">arg</span><span class="p">);</span>
 <span class="w">  </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">q</span><span class="p">;</span>
 <span class="w">  </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">host</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">port</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">NULL</span><span class="p">;</span>
-<span class="w">  </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">pakfile</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">pakfile</span><span class="p">;</span>
 <span class="w">  </span><span class="kt">size_t</span><span class="w"> </span><span class="n">pakfile_len</span><span class="p">;</span>
 
 <span class="w">  </span><span class="n">host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">p</span><span class="o">-&gt;</span><span class="n">p</span><span class="p">;</span>
