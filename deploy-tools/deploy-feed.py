@@ -1,19 +1,23 @@
 #!/usr/bin/python3
 import json
+import re
+import markdown
+import frontmatter
 from pathlib import Path
 import sys
 from os.path import abspath
+from pathlib import Path
+from datetime import datetime
 
 
 root_path=abspath("../")+"/"
 base_path=root_path
-print(root_path)
-print(base_path)
 
 main_directory = Path("../")
 rsc_path=root_path + "/rsc/"
 jsons_path=rsc_path + "/json/"
 htmls_path=rsc_path+"/html"
+md_files_path=rsc_path+"/obsidian-md/"
 templates_path= htmls_path+ "/templates/"
 html_posts_path = htmls_path+"/posts/"
 topics_path = htmls_path+"/topics/"
@@ -65,7 +69,41 @@ json_files = {
 
 directories = [main_directory] + list(main_directory.glob("*/"))
 
+import re
 
+def slugify(name):
+    name = name.strip().lower()
+    name = re.sub(r"[^\w\s-]", "", name)
+    name = re.sub(r"\s+", "-", name)
+    return name
+
+def convert(text):
+    def repl(match):
+        raw = match.group(1).strip()
+        alias = match.group(2)
+
+        # split note and section
+        if "#" in raw:
+            note_part, section_part = raw.split("#", 1)
+            note_slug = slugify(note_part)
+            section_slug = slugify(section_part)
+            href = f"{note_slug}.html#{section_slug}"
+        else:
+            note_slug = slugify(raw)
+            href = f"{note_slug}.html"
+
+        label = alias.strip() if alias else raw
+        return f"[{label}]({href})"
+
+    return re.sub(r"\[\[([^|\]]+)(?:\|([^\]]+))?\]\]", repl, text)
+def slugify_md_names():
+    for file in Path(md_files_path).iterdir():
+        frontmatter_data = frontmatter.load(file)
+        new_name = slugify(frontmatter_data['title'])
+        new_path = file.with_name(new_name)
+        if file.name != new_name:
+            print(f"{file.name} -> {new_name}")
+            file.rename(new_path)
 #loads json items from a file
 def load_json_items(posts_file_json):
     items = []
@@ -102,13 +140,14 @@ def write_text(file_path,text):
         with open(file_path,"w", encoding="utf-8") as f:
             f.write(text)
             f.close()
-    except:
+    except Exception as e:
+        print(e)
         print("couldn't write to html file:" ,file_path)
         return ""
 
 
 
-def make_page_text(template_text,html_text,replaced_text):
+def replace_slot(template_text,html_text,replaced_text):
     try:
         result = template_text.replace(replaced_text,html_text)
         result = result.replace(slots['base'],base_path)
@@ -117,14 +156,16 @@ def make_page_text(template_text,html_text,replaced_text):
         return result
     except Exception as e:
         print(e)
-        print("error making page")
+        print("error replacing slot")
         return -1
         pass
+
 def make_page_file(template_path,html_text,slot_text,result_path):
     
     template_text = get_text(template_path)
-    page_text = make_page_text(template_text,html_text,slot_text)
+    page_text = replace_slot(template_text,html_text,slot_text)
     write_text(result_path,page_text)
+
 
 def generate_feed_item(item):
 
@@ -136,14 +177,14 @@ def generate_feed_item(item):
     except:
         pass
     result = f"""\
-          <a class="feed-item" href="{html_posts_path}/{item['title']}.html">\
+          <a class="feed-item" href="{html_posts_path}/{slugify(item['title'])}.html">\
             <img class="feed-subitem image" src="{item['image']}">\
             <h2 class="feed-subitem title" >{item['title']}</h2>\
             <p class="feed-subitem description">{item['description']}</p>\
             <div class="feed-subitem information">\
               <div class="feed-subitem information author">\
                 <i class="fa-solid fa-user fa-2x"></i>\
-                <p class="button feed-subitem information author-username">{item['author-username']}</p>\
+                <p class="button feed-subitem information author-username">{item['author']}</p>\
               </div>\
               <p class="button feed-subitem information posting-date">{item['date']}</p>\
 
@@ -166,19 +207,36 @@ def build_feed(feed_items):
     print("Feed built successfully into", feed_page)
 
 
-
-def make_posts(posts_items):
+def mdtopost(item):
     slot_text="<!-- post-slot -->"
-    post_template = templates['post']
+    post_template = get_text(templates['post'])
+    obsidian_mdtext = item.content
+    standard_mdtext = convert(obsidian_mdtext)
+    html = markdown.markdown(standard_mdtext,\
+            extensions=['fenced_code', 'codehilite','tables'])
+    html = html.replace(local_link_path,site_link_path)
+    post = replace_slot(post_template,html,slot_text)
+    # post = replace_slot(post,item['tags'],slots['tags'])
+    post = replace_slot(post,item['title'],slots['title'])
+    post = replace_slot(post,item['description'],slots['description'])
+    return post
+
+
+def make_post_files(posts_items):
     for item in posts_items:
-        raw_post_file = html_posts_path+"/raw_html/"+item['title']+".html"
-        post_page_file = html_posts_path+"/"+item['title']+".html"
-        print(post_page_file)
-        raw_post_text = get_text(raw_post_file)
-        raw_post_text = raw_post_text.replace(local_link_path,site_link_path)
-        make_page_file(post_template,raw_post_text,slot_text,post_page_file)
-        make_page_file(post_page_file,item['description'],slots['description'],post_page_file)
-        make_page_file(post_page_file,item['title'],slots['title'],post_page_file)
+        post_filename = slugify(item['title']) +".html"
+        post = mdtopost(item)
+        path = html_posts_path + '/' +post_filename
+        write_text(path,post)
+
+def get_post_items():
+    posts_items = []
+    for mdfile in Path(md_files_path).iterdir():
+        if mdfile.is_file():
+            item = frontmatter.load(mdfile)
+            posts_items.append(item)
+            posts_items.sort(key=lambda p: p["date"],reverse=True)
+    return posts_items
 
 
 def make_topics(topics_items):
@@ -189,7 +247,7 @@ def make_topics(topics_items):
         topic_posts = []
         topic_name = topic_item['title']
         for item in posts_items:
-            post_topics = item['topics'].split(',')
+            post_topics = item['tags']
             if topic_name in post_topics:
                 topic_posts.append(item)
         topic_feed_html = generate_feed_html(topic_posts)
@@ -229,11 +287,13 @@ def build_topics_feed(topics_items):
     topics_page = html_pages_files['topics']
     make_page_file(topics_template,topic_feed,slot_text,topics_page)
 
-posts_items = load_json_items(json_files['post'])
 topics_items = load_json_items(json_files['topics'])
 resources_items = load_json_items(json_files['resources'])
-make_posts(posts_items)
-make_posts(resources_items)
+posts_items = get_post_items()
+
+slugify_md_names()
+make_post_files(posts_items)
+# make_post_files(resources_items)
 make_topics(topics_items)
 build_feed(posts_items)
 build_topics_feed(topics_items)
